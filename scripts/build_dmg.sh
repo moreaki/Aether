@@ -108,29 +108,29 @@ warn_if_clt_only_toolchain() {
   developer_dir="$(xcode-select -p 2>/dev/null || true)"
 
   if [[ "${developer_dir}" == "/Library/Developer/CommandLineTools" ]]; then
-    cat >&2 <<'WARN'
-Warning: Active developer directory is Command Line Tools only.
-Some SwiftUI macro-based packages (for example HighlightSwift >= 1.1.0 using @Entry/#Preview)
-may fail to compile without a full Xcode toolchain.
-
-To prepare this environment for those packages:
-  1) Install full Xcode
-  2) sudo xcode-select -s /Applications/Xcode.app/Contents/Developer
-  3) sudo xcodebuild -runFirstLaunch
-  4) sudo xcodebuild -license accept
-  5) Verify: xcode-select -p && xcodebuild -version && swift --version
-
-See BUILD.md ("Full Xcode Toolchain") for details.
-WARN
+    printf '%s\n' \
+      'Warning: Active developer directory is Command Line Tools only.' \
+      'Some SwiftUI macro-based packages (for example HighlightSwift >= 1.1.0 using @Entry/#Preview)' \
+      'may fail to compile without a full Xcode toolchain.' \
+      '' \
+      'To prepare this environment for those packages:' \
+      '  1) Install full Xcode' \
+      '  2) sudo xcode-select -s /Applications/Xcode.app/Contents/Developer' \
+      '  3) sudo xcodebuild -runFirstLaunch' \
+      '  4) sudo xcodebuild -license accept' \
+      '  5) Verify: xcode-select -p && xcodebuild -version && swift --version' \
+      '' \
+      'See BUILD.md ("Full Xcode Toolchain") for details.' \
+      >&2
     return
   fi
 
   if ! xcodebuild -version >/dev/null 2>&1; then
-    cat >&2 <<'WARN'
-Warning: xcodebuild is unavailable in the active toolchain.
-Some SwiftUI macro-based packages may fail to compile without full Xcode.
-See BUILD.md ("Full Xcode Toolchain") for setup steps.
-WARN
+    printf '%s\n' \
+      'Warning: xcodebuild is unavailable in the active toolchain.' \
+      'Some SwiftUI macro-based packages may fail to compile without full Xcode.' \
+      'See BUILD.md ("Full Xcode Toolchain") for setup steps.' \
+      >&2
   fi
 }
 
@@ -334,46 +334,46 @@ generate_app_icon_icns \
   "${APP_DIR}/Contents/Resources"
 
 log "Writing Info.plist"
-cat > "${APP_DIR}/Contents/Info.plist" <<PLIST
-<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-  <key>CFBundleDevelopmentRegion</key>
-  <string>en</string>
-  <key>CFBundleExecutable</key>
-  <string>${APP_NAME}</string>
-  <key>CFBundleIdentifier</key>
-  <string>${BUNDLE_ID}</string>
-  <key>CFBundleInfoDictionaryVersion</key>
-  <string>6.0</string>
-  <key>CFBundleName</key>
-  <string>${APP_NAME}</string>
-  <key>CFBundlePackageType</key>
-  <string>APPL</string>
-  <key>CFBundleIconFile</key>
-  <string>AppIcon</string>
-  <key>CFBundleShortVersionString</key>
-  <string>${APP_VERSION}</string>
-  <key>CFBundleVersion</key>
-  <string>${APP_BUILD}</string>
-  <key>AetherBuildTimestamp</key>
-  <string>${BUILD_TIMESTAMP}</string>
-  <key>AetherBuildTargetArch</key>
-  <string>${TARGET_ARCH}</string>
-  <key>AetherBuildCommit</key>
-  <string>${BUILD_COMMIT}</string>
-  <key>AetherLicense</key>
-  <string>${LICENSE_NAME}</string>
-  <key>LSMinimumSystemVersion</key>
-  <string>${MIN_MACOS_VERSION}</string>
-  <key>NSHighResolutionCapable</key>
-  <true/>
-  <key>NSPrincipalClass</key>
-  <string>NSApplication</string>
-</dict>
-</plist>
-PLIST
+{
+  printf '%s\n' '<?xml version="1.0" encoding="UTF-8"?>'
+  printf '%s\n' '<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">'
+  printf '%s\n' '<plist version="1.0">'
+  printf '%s\n' '<dict>'
+  printf '%s\n' '  <key>CFBundleDevelopmentRegion</key>'
+  printf '%s\n' '  <string>en</string>'
+  printf '%s\n' '  <key>CFBundleExecutable</key>'
+  printf '  <string>%s</string>\n' "${APP_NAME}"
+  printf '%s\n' '  <key>CFBundleIdentifier</key>'
+  printf '  <string>%s</string>\n' "${BUNDLE_ID}"
+  printf '%s\n' '  <key>CFBundleInfoDictionaryVersion</key>'
+  printf '%s\n' '  <string>6.0</string>'
+  printf '%s\n' '  <key>CFBundleName</key>'
+  printf '  <string>%s</string>\n' "${APP_NAME}"
+  printf '%s\n' '  <key>CFBundlePackageType</key>'
+  printf '%s\n' '  <string>APPL</string>'
+  printf '%s\n' '  <key>CFBundleIconFile</key>'
+  printf '%s\n' '  <string>AppIcon</string>'
+  printf '%s\n' '  <key>CFBundleShortVersionString</key>'
+  printf '  <string>%s</string>\n' "${APP_VERSION}"
+  printf '%s\n' '  <key>CFBundleVersion</key>'
+  printf '  <string>%s</string>\n' "${APP_BUILD}"
+  printf '%s\n' '  <key>AetherBuildTimestamp</key>'
+  printf '  <string>%s</string>\n' "${BUILD_TIMESTAMP}"
+  printf '%s\n' '  <key>AetherBuildTargetArch</key>'
+  printf '  <string>%s</string>\n' "${TARGET_ARCH}"
+  printf '%s\n' '  <key>AetherBuildCommit</key>'
+  printf '  <string>%s</string>\n' "${BUILD_COMMIT}"
+  printf '%s\n' '  <key>AetherLicense</key>'
+  printf '  <string>%s</string>\n' "${LICENSE_NAME}"
+  printf '%s\n' '  <key>LSMinimumSystemVersion</key>'
+  printf '  <string>%s</string>\n' "${MIN_MACOS_VERSION}"
+  printf '%s\n' '  <key>NSHighResolutionCapable</key>'
+  printf '%s\n' '  <true/>'
+  printf '%s\n' '  <key>NSPrincipalClass</key>'
+  printf '%s\n' '  <string>NSApplication</string>'
+  printf '%s\n' '</dict>'
+  printf '%s\n' '</plist>'
+} > "${APP_DIR}/Contents/Info.plist"
 
 log "Signing app bundle"
 if [[ "${APP_ONLY}" == "1" ]]; then
@@ -407,20 +407,20 @@ printf '%s  %s\n' "${APP_EXEC_SHA256}" "${APP_NAME}.app/Contents/MacOS/${APP_NAM
 
 if [[ "${APP_ONLY}" == "1" ]]; then
   MANIFEST_FILE="${DIST_DIR}/${APP_NAME}-${TARGET_ARCH}.build-manifest.json"
-  cat > "${MANIFEST_FILE}" <<JSON
-{
-  "app_name": "${APP_NAME}",
-  "bundle_id": "${BUNDLE_ID}",
-  "version": "${APP_VERSION}",
-  "build": "${APP_BUILD}",
-  "build_timestamp_utc": "${BUILD_TIMESTAMP}",
-  "build_commit": "${BUILD_COMMIT}",
-  "target_arch": "${TARGET_ARCH}",
-  "license": "${LICENSE_NAME}",
-  "app_bundle": "$(basename "${FINAL_APP}")",
-  "app_executable_sha256": "${APP_EXEC_SHA256}"
-}
-JSON
+  {
+    printf '{\n'
+    printf '  "app_name": "%s",\n' "${APP_NAME}"
+    printf '  "bundle_id": "%s",\n' "${BUNDLE_ID}"
+    printf '  "version": "%s",\n' "${APP_VERSION}"
+    printf '  "build": "%s",\n' "${APP_BUILD}"
+    printf '  "build_timestamp_utc": "%s",\n' "${BUILD_TIMESTAMP}"
+    printf '  "build_commit": "%s",\n' "${BUILD_COMMIT}"
+    printf '  "target_arch": "%s",\n' "${TARGET_ARCH}"
+    printf '  "license": "%s",\n' "${LICENSE_NAME}"
+    printf '  "app_bundle": "%s",\n' "$(basename "${FINAL_APP}")"
+    printf '  "app_executable_sha256": "%s"\n' "${APP_EXEC_SHA256}"
+    printf '}\n'
+  } > "${MANIFEST_FILE}"
 
   log "Done"
   echo "App: ${FINAL_APP}"
@@ -472,21 +472,21 @@ MANIFEST_FILE="${DIST_DIR}/${APP_NAME}-${TARGET_ARCH}.build-manifest.json"
 printf '%s  %s\n' "${APP_EXEC_SHA256}" "${APP_NAME}.app/Contents/MacOS/${APP_NAME}" > "${APP_SHA_FILE}"
 printf '%s  %s\n' "${DMG_SHA256}" "$(basename "${FINAL_DMG}")" > "${DMG_SHA_FILE}"
 
-cat > "${MANIFEST_FILE}" <<JSON
 {
-  "app_name": "${APP_NAME}",
-  "bundle_id": "${BUNDLE_ID}",
-  "version": "${APP_VERSION}",
-  "build": "${APP_BUILD}",
-  "build_timestamp_utc": "${BUILD_TIMESTAMP}",
-  "build_commit": "${BUILD_COMMIT}",
-  "target_arch": "${TARGET_ARCH}",
-  "license": "${LICENSE_NAME}",
-  "app_executable_sha256": "${APP_EXEC_SHA256}",
-  "dmg_file": "$(basename "${FINAL_DMG}")",
-  "dmg_sha256": "${DMG_SHA256}"
-}
-JSON
+  printf '{\n'
+  printf '  "app_name": "%s",\n' "${APP_NAME}"
+  printf '  "bundle_id": "%s",\n' "${BUNDLE_ID}"
+  printf '  "version": "%s",\n' "${APP_VERSION}"
+  printf '  "build": "%s",\n' "${APP_BUILD}"
+  printf '  "build_timestamp_utc": "%s",\n' "${BUILD_TIMESTAMP}"
+  printf '  "build_commit": "%s",\n' "${BUILD_COMMIT}"
+  printf '  "target_arch": "%s",\n' "${TARGET_ARCH}"
+  printf '  "license": "%s",\n' "${LICENSE_NAME}"
+  printf '  "app_executable_sha256": "%s",\n' "${APP_EXEC_SHA256}"
+  printf '  "dmg_file": "%s",\n' "$(basename "${FINAL_DMG}")"
+  printf '  "dmg_sha256": "%s"\n' "${DMG_SHA256}"
+  printf '}\n'
+} > "${MANIFEST_FILE}"
 
 log "Done"
 echo "DMG: ${FINAL_DMG}"
