@@ -98,6 +98,8 @@ class AppState: ObservableObject {
     // MARK: - Disassembly Cache
     @Published var disassemblyCache: [UInt64: [Instruction]] = [:]
     @Published var decompilerOutput: String = ""
+    @Published var activeDecompilerBackendName: String = "Native"
+    @Published var decompilerEngineError: String?
 
     // MARK: - Patching State
     @Published var patcher: BinaryPatcher?
@@ -128,7 +130,9 @@ class AppState: ObservableObject {
     private let xrefAnalyzer = XRefAnalyzer()
     private let decompiler = Decompiler()
     private let javaDecompiler = JavaDecompiler()
+    private let vineflowerDecompiler = VineflowerDecompiler()
     private let fridaGenerator = FridaScriptGenerator()
+    private var vineflowerSourceCache: [String: String] = [:]
 
     // MARK: - File Operations
 
@@ -175,6 +179,11 @@ class AppState: ObservableObject {
         // Clear undo/redo
         undoStack = []
         redoStack = []
+
+        // Clear decompiler backend state/cache
+        activeDecompilerBackendName = "Native"
+        vineflowerSourceCache.removeAll()
+        decompilerEngineError = nil
     }
 
     func loadFile(url: URL) async {
@@ -651,15 +660,52 @@ class AppState: ObservableObject {
 
     // MARK: - Decompilation
 
+    var selectedJavaDecompilerBackend: JavaDecompilerBackend {
+        let rawValue = UserDefaults.standard.string(forKey: JavaDecompilerBackend.userDefaultsKey)
+        return JavaDecompilerBackend(rawValue: rawValue ?? "") ?? .internalEngine
+    }
+
+    var isCurrentFileJava: Bool {
+        guard let currentFile else { return false }
+        return !(currentFile.javaClasses?.isEmpty ?? true)
+    }
+
+    var nextJavaDecompilerBackend: JavaDecompilerBackend {
+        selectedJavaDecompilerBackend == .internalEngine ? .vineflower : .internalEngine
+    }
+
+    var canSwitchToNextJavaDecompilerBackend: Bool {
+        guard isCurrentFileJava else { return false }
+        if nextJavaDecompilerBackend == .vineflower {
+            return VineflowerDecompiler.findExecutablePath() != nil
+        }
+        return true
+    }
+
+    var nextJavaDecompilerBackendName: String {
+        backendDisplayName(nextJavaDecompilerBackend)
+    }
+
+    func switchToNextJavaDecompilerBackend() {
+        guard canSwitchToNextJavaDecompilerBackend else { return }
+        UserDefaults.standard.set(nextJavaDecompilerBackend.rawValue, forKey: JavaDecompilerBackend.userDefaultsKey)
+        if selectedFunction != nil {
+            decompileCurrentFunction()
+        }
+    }
+
     func decompileCurrentFunction() {
         guard let function = selectedFunction,
               let binary = currentFile else { return }
+        decompilerEngineError = nil
 
         // Check if this is a Java class file
         if let javaClasses = binary.javaClasses, !javaClasses.isEmpty {
             decompileJavaMethod(function: function, javaClasses: javaClasses)
             return
         }
+
+        activeDecompilerBackendName = "Native"
 
         Task {
             let instructions = await disassembleFunction(function)
@@ -672,6 +718,86 @@ class AppState: ObservableObject {
     }
 
     private func decompileJavaMethod(function: Function, javaClasses: [JARLoader.JavaClass]) {
+        if selectedJavaDecompilerBackend == .vineflower {
+            guard VineflowerDecompiler.findExecutablePath() != nil else {
+                decompilerEngineError = "Vineflower backend selected, but executable was not found in $HOMEBREW_PREFIX/bin/vineflower, /opt/homebrew/bin/vineflower, or /usr/local/bin/vineflower."
+                var fallbackMessage = "// Vineflower backend selected but executable was not found.\n"
+                fallbackMessage += "// Falling back to internal Java decompiler.\n\n"
+                decompileJavaMethodInternal(
+                    function: function,
+                    javaClasses: javaClasses,
+                    prefixComment: fallbackMessage
+                )
+                return
+            }
+            decompileJavaMethodWithVineflower(function: function, javaClasses: javaClasses)
+            return
+        }
+
+        decompileJavaMethodInternal(function: function, javaClasses: javaClasses)
+    }
+
+    private func decompileJavaMethodWithVineflower(function: Function, javaClasses: [JARLoader.JavaClass]) {
+        guard let binary = currentFile else {
+            decompileJavaMethodInternal(function: function, javaClasses: javaClasses)
+            return
+        }
+
+        let preferredClassName = extractJavaClassName(from: function.name)
+        let inputURL = binary.url
+        let cacheKey = makeVineflowerCacheKey(inputURL: inputURL, preferredClassName: preferredClassName)
+
+        if let cachedSource = vineflowerSourceCache[cacheKey] {
+            activeDecompilerBackendName = backendDisplayName(.vineflower)
+            decompilerEngineError = nil
+            decompilerOutput = formatVineflowerOutput(
+                source: cachedSource,
+                inputURL: inputURL,
+                preferredClassName: preferredClassName,
+                fromCache: true
+            )
+            return
+        }
+
+        decompilerOutput = "// Decompiling with Vineflower...\n"
+
+        Task {
+            do {
+                let source = try await Task.detached(priority: .userInitiated) {
+                    try VineflowerDecompiler().decompile(
+                        inputURL: inputURL,
+                        preferredClassName: preferredClassName
+                    )
+                }.value
+
+                vineflowerSourceCache[cacheKey] = source
+                activeDecompilerBackendName = backendDisplayName(.vineflower)
+                decompilerEngineError = nil
+                decompilerOutput = formatVineflowerOutput(
+                    source: source,
+                    inputURL: inputURL,
+                    preferredClassName: preferredClassName,
+                    fromCache: false
+                )
+            } catch {
+                decompilerEngineError = error.localizedDescription
+                var fallbackMessage = "// Vineflower failed (\(error.localizedDescription)).\n"
+                fallbackMessage += "// Falling back to internal Java decompiler.\n\n"
+                decompileJavaMethodInternal(
+                    function: function,
+                    javaClasses: javaClasses,
+                    prefixComment: fallbackMessage
+                )
+            }
+        }
+    }
+
+    private func decompileJavaMethodInternal(
+        function: Function,
+        javaClasses: [JARLoader.JavaClass],
+        prefixComment: String = ""
+    ) {
+        activeDecompilerBackendName = backendDisplayName(.internalEngine)
         let functionName = function.name
 
         // Find matching class and method - use exact matching
@@ -685,7 +811,9 @@ class AppState: ObservableObject {
                     // Found the exact method - decompile just this method
                     let decompiledMethod = javaDecompiler.decompileMethod(method, in: javaClass)
 
-                    var output = "// Function at 0x\(String(format: "%X", function.startAddress))\n"
+                    var output = prefixComment
+                    output += "// Backend: Internal\n"
+                    output += "// Function at 0x\(String(format: "%X", function.startAddress))\n"
                     output += "// Size: \(method.code?.code.count ?? 0) bytes (bytecode)\n"
                     output += "// Class: \(className)\n"
                     output += "// Method: \(method.name)\(method.descriptor)\n\n"
@@ -708,13 +836,64 @@ class AppState: ObservableObject {
         }
 
         // Fallback: couldn't find the method
-        decompilerOutput = "// Could not find Java method for: \(functionName)\n// Available methods in loaded classes:\n"
+        decompilerOutput = prefixComment
+        decompilerOutput += "// Backend: Internal\n"
+        decompilerOutput += "// Could not find Java method for: \(functionName)\n// Available methods in loaded classes:\n"
         for javaClass in javaClasses.prefix(5) {
             let className = javaClass.thisClass.replacingOccurrences(of: "/", with: ".")
             for method in javaClass.methods.prefix(3) {
                 decompilerOutput += "//   \(className).\(method.name)\(method.descriptor)\n"
             }
         }
+    }
+
+    private func extractJavaClassName(from functionName: String) -> String? {
+        guard let descriptorStart = functionName.firstIndex(of: "(") else {
+            return nil
+        }
+
+        let beforeDescriptor = functionName[..<descriptorStart]
+        guard let lastDot = beforeDescriptor.lastIndex(of: ".") else {
+            return nil
+        }
+
+        return String(beforeDescriptor[..<lastDot])
+    }
+
+    private func backendDisplayName(_ backend: JavaDecompilerBackend) -> String {
+        switch backend {
+        case .internalEngine:
+            return "Internal"
+        case .vineflower:
+            return "Vineflower"
+        }
+    }
+
+    private func makeVineflowerCacheKey(inputURL: URL, preferredClassName: String?) -> String {
+        let attributes = (try? FileManager.default.attributesOfItem(atPath: inputURL.path)) ?? [:]
+        let fileSize = (attributes[.size] as? NSNumber)?.int64Value ?? -1
+        let modifiedAt = (attributes[.modificationDate] as? Date)?.timeIntervalSince1970 ?? 0
+        let classKey = preferredClassName ?? "__all__"
+        return "\(inputURL.path)|\(fileSize)|\(modifiedAt)|\(classKey)"
+    }
+
+    private func formatVineflowerOutput(
+        source: String,
+        inputURL: URL,
+        preferredClassName: String?,
+        fromCache: Bool
+    ) -> String {
+        var output = "// Backend: Vineflower\n"
+        output += "// Source: \(inputURL.lastPathComponent)\n"
+        if let preferredClassName {
+            output += "// Class: \(preferredClassName)\n"
+        }
+        if fromCache {
+            output += "// Cache: hit\n"
+        }
+        output += "\n"
+        output += source
+        return output
     }
 
     // MARK: - AI Security Analysis
