@@ -103,6 +103,37 @@ require_cmd() {
   }
 }
 
+warn_if_clt_only_toolchain() {
+  local developer_dir
+  developer_dir="$(xcode-select -p 2>/dev/null || true)"
+
+  if [[ "${developer_dir}" == "/Library/Developer/CommandLineTools" ]]; then
+    cat >&2 <<'WARN'
+Warning: Active developer directory is Command Line Tools only.
+Some SwiftUI macro-based packages (for example HighlightSwift >= 1.1.0 using @Entry/#Preview)
+may fail to compile without a full Xcode toolchain.
+
+To prepare this environment for those packages:
+  1) Install full Xcode
+  2) sudo xcode-select -s /Applications/Xcode.app/Contents/Developer
+  3) sudo xcodebuild -runFirstLaunch
+  4) sudo xcodebuild -license accept
+  5) Verify: xcode-select -p && xcodebuild -version && swift --version
+
+See BUILD.md ("Full Xcode Toolchain") for details.
+WARN
+    return
+  fi
+
+  if ! xcodebuild -version >/dev/null 2>&1; then
+    cat >&2 <<'WARN'
+Warning: xcodebuild is unavailable in the active toolchain.
+Some SwiftUI macro-based packages may fail to compile without full Xcode.
+See BUILD.md ("Full Xcode Toolchain") for setup steps.
+WARN
+  fi
+}
+
 generate_app_icon_icns() {
   local app_iconset_src="$1"
   local app_resources_dir="$2"
@@ -214,6 +245,7 @@ require_cmd lipo
 require_cmd codesign
 require_cmd sips
 require_cmd iconutil
+warn_if_clt_only_toolchain
 if [[ "${APP_ONLY}" != "1" ]]; then
   require_cmd hdiutil
 fi
