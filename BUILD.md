@@ -2,8 +2,8 @@
 
 This project includes `scripts/build_dmg.sh` to produce a distributable macOS DMG:
 
-- Output: `dist/Aether.dmg`
-- Includes a universal binary (`arm64` + `x86_64`)
+- Output: `dist/Aether-<arch>.dmg` (`Aether-universal.dmg`, `Aether-arm64.dmg`, or `Aether-x86_64.dmg`)
+- Default build target: universal (`arm64` + `x86_64`)
 - Signs the `.app` and `.dmg`
 - Notarizes and staples both (unless `--skip-notarization`)
 
@@ -100,10 +100,17 @@ From repo root:
 ```bash
 APP_SIGN_IDENTITY="Developer ID Application: Your Name (ABCDE12345)" \
 NOTARY_PROFILE="AETHER_NOTARY" \
-scripts/build_dmg.sh --bundle-id "com.yourcompany.aether" --version "1.2.1"
+scripts/build_dmg.sh --bundle-id "com.yourcompany.aether" --version "1.2.1" --arch universal
 ```
 
 If `--version` is omitted, the script uses the latest git tag (without leading `v`) or falls back to `0.0.0`.
+
+By default, the script sets:
+
+- `CFBundleShortVersionString` from `APP_VERSION` (what macOS shows as `Version X.Y.Z`)
+- `CFBundleVersion` from `APP_BUILD` (defaults to git short hash)
+
+So About shows `Version X.Y.Z (<build-info>)` instead of duplicating the same value twice.
 
 ## Useful script options
 
@@ -113,7 +120,13 @@ scripts/build_dmg.sh --help
 
 - `--bundle-id <id>`: CFBundleIdentifier in `Info.plist`
 - `--version <semver>`: app short/build version
+- `--arch <target>`: `universal` (default), `arm64`, or `x86_64`
 - `--skip-notarization`: sign only, skip notary submission/stapling
+
+Additional env var:
+
+- `APP_BUILD`: explicit build info for `CFBundleVersion` (for example `a1b2c3d4` or CI build number)
+- `TARGET_ARCH`: same as `--arch`
 
 ## Resource handling in the DMG build
 
@@ -145,14 +158,14 @@ This uses ad-hoc signing and is not suitable for public distribution.
 After build:
 
 ```bash
-ls -lh dist/Aether.dmg
-spctl -a -vvv -t open dist/Aether.dmg
+ls -lh dist/Aether-*.dmg
+spctl -a -vvv -t open dist/Aether-universal.dmg
 ```
 
 You can also mount and inspect:
 
 ```bash
-hdiutil attach dist/Aether.dmg
+hdiutil attach dist/Aether-universal.dmg
 ```
 
 ## CI note

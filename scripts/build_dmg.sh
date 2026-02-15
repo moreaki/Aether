@@ -12,8 +12,10 @@ PROJECT_RESOURCES_DIR="${ROOT_DIR}/Sources/Aether/Resources"
 APP_SIGN_IDENTITY="${APP_SIGN_IDENTITY:-}"
 NOTARY_PROFILE="${NOTARY_PROFILE:-}"
 SKIP_NOTARIZATION="${SKIP_NOTARIZATION:-0}"
+TARGET_ARCH="${TARGET_ARCH:-universal}"
 BUNDLE_ID="${BUNDLE_ID:-com.aether.app}"
 APP_VERSION="${APP_VERSION:-}"
+APP_BUILD="${APP_BUILD:-}"
 MIN_MACOS_VERSION="${MIN_MACOS_VERSION:-14.0}"
 DMG_VOLUME_NAME="${DMG_VOLUME_NAME:-Aether}"
 
@@ -21,10 +23,11 @@ usage() {
   cat <<USAGE
 Usage: $(basename "$0") [options]
 
-Builds a universal Aether.app, signs it, notarizes it, and outputs dist/Aether.dmg.
+Builds Aether.app, signs it, notarizes it, and outputs dist/Aether-<arch>.dmg.
 
 Options:
   --version <semver>        App version (default: latest git tag or 0.0.0)
+  --arch <target>           universal (default), arm64, x86_64
   --bundle-id <id>          Bundle identifier (default: com.aether.app)
   --skip-notarization       Skip notarization/stapling
   -h, --help                Show this help
@@ -37,6 +40,8 @@ Required unless --skip-notarization is used:
 
 Optional env vars:
   APP_VERSION               Same as --version
+  APP_BUILD                 CFBundleVersion (default: git short hash, fallback APP_VERSION)
+  TARGET_ARCH               Same as --arch
   BUNDLE_ID                 Same as --bundle-id
   MIN_MACOS_VERSION         Defaults to 14.0
   DMG_VOLUME_NAME           Defaults to Aether
@@ -47,6 +52,10 @@ while [[ $# -gt 0 ]]; do
   case "$1" in
     --version)
       APP_VERSION="$2"
+      shift 2
+      ;;
+    --arch)
+      TARGET_ARCH="$2"
       shift 2
       ;;
     --bundle-id)
@@ -135,6 +144,11 @@ if [[ -z "${APP_SIGN_IDENTITY}" ]]; then
   exit 1
 fi
 
+if [[ "${TARGET_ARCH}" != "universal" && "${TARGET_ARCH}" != "arm64" && "${TARGET_ARCH}" != "x86_64" ]]; then
+  echo "Invalid --arch value: ${TARGET_ARCH}. Expected one of: universal, arm64, x86_64" >&2
+  exit 1
+fi
+
 if [[ "${SKIP_NOTARIZATION}" != "1" && -z "${NOTARY_PROFILE}" ]]; then
   echo "NOTARY_PROFILE is required unless --skip-notarization is used." >&2
   exit 1
@@ -147,6 +161,14 @@ fi
 
 if [[ -z "${APP_VERSION}" ]]; then
   APP_VERSION="0.0.0"
+fi
+
+if [[ -z "${APP_BUILD}" ]]; then
+  APP_BUILD="$(git -C "${ROOT_DIR}" rev-parse --short=8 HEAD 2>/dev/null || true)"
+fi
+
+if [[ -z "${APP_BUILD}" ]]; then
+  APP_BUILD="${APP_VERSION}"
 fi
 
 require_cmd swift
@@ -162,30 +184,50 @@ log "Cleaning previous artifacts"
 rm -rf "${WORK_DIR}" "${DIST_DIR}"
 mkdir -p "${WORK_DIR}" "${DIST_DIR}"
 
-log "Building release binaries (arm64 + x86_64)"
-swift build --package-path "${ROOT_DIR}" -c release --arch arm64
-swift build --package-path "${ROOT_DIR}" -c release --arch x86_64
-
-ARM_RELEASE_DIR="$(resolve_release_dir arm64)"
-X86_RELEASE_DIR="$(resolve_release_dir x86_64)"
-ARM_BINARY="${ARM_RELEASE_DIR}/${APP_NAME}"
-X86_BINARY="${X86_RELEASE_DIR}/${APP_NAME}"
-
-if [[ ! -f "${ARM_BINARY}" ]]; then
-  echo "Missing arm64 binary: ${ARM_BINARY}" >&2
-  exit 1
-fi
-
-if [[ ! -f "${X86_BINARY}" ]]; then
-  echo "Missing x86_64 binary: ${X86_BINARY}" >&2
-  exit 1
-fi
+log "Build metadata: version=${APP_VERSION}, build=${APP_BUILD}, arch=${TARGET_ARCH}"
 
 APP_DIR="${WORK_DIR}/${APP_NAME}.app"
 mkdir -p "${APP_DIR}/Contents/MacOS" "${APP_DIR}/Contents/Resources"
 
-log "Creating universal executable"
-lipo -create "${ARM_BINARY}" "${X86_BINARY}" -output "${APP_DIR}/Contents/MacOS/${APP_NAME}"
+RESOURCE_RELEASE_DIR=""
+if [[ "${TARGET_ARCH}" == "universal" ]]; then
+  log "Building release binaries (arm64 + x86_64)"
+  swift build --package-path "${ROOT_DIR}" -c release --arch arm64
+  swift build --package-path "${ROOT_DIR}" -c release --arch x86_64
+
+  ARM_RELEASE_DIR="$(resolve_release_dir arm64)"
+  X86_RELEASE_DIR="$(resolve_release_dir x86_64)"
+  ARM_BINARY="${ARM_RELEASE_DIR}/${APP_NAME}"
+  X86_BINARY="${X86_RELEASE_DIR}/${APP_NAME}"
+
+  if [[ ! -f "${ARM_BINARY}" ]]; then
+    echo "Missing arm64 binary: ${ARM_BINARY}" >&2
+    exit 1
+  fi
+
+  if [[ ! -f "${X86_BINARY}" ]]; then
+    echo "Missing x86_64 binary: ${X86_BINARY}" >&2
+    exit 1
+  fi
+
+  log "Creating universal executable"
+  lipo -create "${ARM_BINARY}" "${X86_BINARY}" -output "${APP_DIR}/Contents/MacOS/${APP_NAME}"
+  RESOURCE_RELEASE_DIR="${ARM_RELEASE_DIR}"
+else
+  log "Building release binary (${TARGET_ARCH})"
+  swift build --package-path "${ROOT_DIR}" -c release --arch "${TARGET_ARCH}"
+  RELEASE_DIR="$(resolve_release_dir "${TARGET_ARCH}")"
+  ARCH_BINARY="${RELEASE_DIR}/${APP_NAME}"
+
+  if [[ ! -f "${ARCH_BINARY}" ]]; then
+    echo "Missing ${TARGET_ARCH} binary: ${ARCH_BINARY}" >&2
+    exit 1
+  fi
+
+  cp "${ARCH_BINARY}" "${APP_DIR}/Contents/MacOS/${APP_NAME}"
+  RESOURCE_RELEASE_DIR="${RELEASE_DIR}"
+fi
+
 chmod 755 "${APP_DIR}/Contents/MacOS/${APP_NAME}"
 
 log "Copying SwiftPM resource bundles"
@@ -193,10 +235,10 @@ found_bundle=0
 while IFS= read -r -d '' bundle_path; do
   cp -R "${bundle_path}" "${APP_DIR}/Contents/Resources/"
   found_bundle=1
-done < <(find "${ARM_RELEASE_DIR}" -maxdepth 1 -type d -name "*.bundle" -print0)
+done < <(find "${RESOURCE_RELEASE_DIR}" -maxdepth 1 -type d -name "*.bundle" -print0)
 
 if [[ "${found_bundle}" -eq 0 ]]; then
-  echo "Warning: no .bundle resources found in ${ARM_RELEASE_DIR}" >&2
+  echo "Warning: no .bundle resources found in ${RESOURCE_RELEASE_DIR}" >&2
 fi
 
 if [[ -d "${PROJECT_RESOURCES_DIR}" ]]; then
@@ -233,7 +275,7 @@ cat > "${APP_DIR}/Contents/Info.plist" <<PLIST
   <key>CFBundleShortVersionString</key>
   <string>${APP_VERSION}</string>
   <key>CFBundleVersion</key>
-  <string>${APP_VERSION}</string>
+  <string>${APP_BUILD}</string>
   <key>LSMinimumSystemVersion</key>
   <string>${MIN_MACOS_VERSION}</string>
   <key>NSHighResolutionCapable</key>
@@ -268,7 +310,7 @@ cp -R "${APP_DIR}" "${DMG_STAGE_DIR}/"
 ln -s /Applications "${DMG_STAGE_DIR}/Applications"
 
 UNSIGNED_DMG="${WORK_DIR}/${APP_NAME}.dmg"
-FINAL_DMG="${DIST_DIR}/${APP_NAME}.dmg"
+FINAL_DMG="${DIST_DIR}/${APP_NAME}-${TARGET_ARCH}.dmg"
 
 log "Building DMG"
 hdiutil create \
