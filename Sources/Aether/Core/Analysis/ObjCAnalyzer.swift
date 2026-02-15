@@ -119,9 +119,6 @@ class ObjCAnalyzer {
         let protoListSection = binary.sections.first { $0.name == "__objc_protolist" }
         let selRefsSection = binary.sections.first { $0.name == "__objc_selrefs" }
         let classRefsSection = binary.sections.first { $0.name == "__objc_classrefs" }
-        let methNamesSection = binary.sections.first { $0.name == "__objc_methname" }
-        let classNamesSection = binary.sections.first { $0.name == "__objc_classname" }
-
         // Parse classes
         if let classListSection = classListSection {
             result.classes = parseClassList(classListSection, binary: binary)
@@ -464,7 +461,7 @@ class ObjCAnalyzer {
     }
 
     private func parseClassRefs(_ section: Section, binary: BinaryFile) -> [UInt64: String] {
-        var refs: [UInt64: String] = [:]
+        let refs: [UInt64: String] = [:]
         // Would need to follow class pointers to get names
         return refs
     }

@@ -140,7 +140,7 @@ class Decompiler {
 
         for insn in instructions {
             let operands = insn.operands.lowercased()
-            for (i, reg) in argRegs.enumerated() {
+            for (_, reg) in argRegs.enumerated() {
                 if operands.contains(reg.lowercased()) {
                     let type = inferOperandType(insn: insn, operand: reg)
                     usedArgs[reg] = type
@@ -435,9 +435,6 @@ class Decompiler {
     }
 
     private func decompileReturn(_ insn: Instruction, binary: BinaryFile) -> String {
-        // Check return register for value
-        let returnReg = binary.architecture.returnValueRegister.lowercased()
-
         // Simple heuristic: if not void function, return the result
         return "return result;"
     }
@@ -726,7 +723,7 @@ class Decompiler {
         // RIP-relative
         if s.lowercased().contains("rip") {
             if let match = s.range(of: "[+-] ?(0x[0-9a-fA-F]+|\\d+)", options: .regularExpression) {
-                let offsetStr = String(s[match])
+                _ = String(s[match])
                 // Would need current instruction address to resolve this
             }
         }

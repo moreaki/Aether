@@ -622,7 +622,7 @@ class IdiomRecognizer {
     }
 
     private func parseNumber(_ str: String) -> Int64? {
-        var s = str.trimmingCharacters(in: .whitespaces)
+        let s = str.trimmingCharacters(in: .whitespaces)
         if s.hasPrefix("0x") || s.hasPrefix("0X") {
             return Int64(s.dropFirst(2), radix: 16)
         }

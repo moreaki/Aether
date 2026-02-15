@@ -56,7 +56,7 @@ class PELoader: BinaryLoaderProtocol {
         guard let machine = data.readUInt16LE(at: coffOffset),
               let numberOfSections = data.readUInt16LE(at: coffOffset + 2),
               let sizeOfOptionalHeader = data.readUInt16LE(at: coffOffset + 16),
-              let characteristics = data.readUInt16LE(at: coffOffset + 18) else {
+              data.readUInt16LE(at: coffOffset + 18) != nil else {
             throw BinaryLoaderError.invalidHeader
         }
 
@@ -72,31 +72,25 @@ class PELoader: BinaryLoaderProtocol {
         // Parse optional header fields
         let entryPoint: UInt64
         let imageBase: UInt64
-        let sectionAlignment: UInt32
-        let fileAlignment: UInt32
 
         if is64Bit {
             guard let ep = data.readUInt32LE(at: optionalHeaderOffset + 16),
                   let ib = data.readUInt64LE(at: optionalHeaderOffset + 24),
-                  let sa = data.readUInt32LE(at: optionalHeaderOffset + 32),
-                  let fa = data.readUInt32LE(at: optionalHeaderOffset + 36) else {
+                  data.readUInt32LE(at: optionalHeaderOffset + 32) != nil,
+                  data.readUInt32LE(at: optionalHeaderOffset + 36) != nil else {
                 throw BinaryLoaderError.invalidHeader
             }
             imageBase = ib
             entryPoint = imageBase + UInt64(ep)
-            sectionAlignment = sa
-            fileAlignment = fa
         } else {
             guard let ep = data.readUInt32LE(at: optionalHeaderOffset + 16),
                   let ib = data.readUInt32LE(at: optionalHeaderOffset + 28),
-                  let sa = data.readUInt32LE(at: optionalHeaderOffset + 32),
-                  let fa = data.readUInt32LE(at: optionalHeaderOffset + 36) else {
+                  data.readUInt32LE(at: optionalHeaderOffset + 32) != nil,
+                  data.readUInt32LE(at: optionalHeaderOffset + 36) != nil else {
                 throw BinaryLoaderError.invalidHeader
             }
             imageBase = UInt64(ib)
             entryPoint = imageBase + UInt64(ep)
-            sectionAlignment = sa
-            fileAlignment = fa
         }
 
         // Parse sections

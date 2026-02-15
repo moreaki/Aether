@@ -87,7 +87,6 @@ actor DisassemblerEngine {
         var hasRex = false
         var rexW = false
         var rexR = false
-        var rexX = false
         var rexB = false
 
         // SSE/AVX prefix tracking
@@ -127,7 +126,6 @@ actor DisassemblerEngine {
             hasRex = true
             rexW = (bytes[idx] & 0x08) != 0
             rexR = (bytes[idx] & 0x04) != 0
-            rexX = (bytes[idx] & 0x02) != 0
             rexB = (bytes[idx] & 0x01) != 0
             idx += 1
             guard idx < bytes.count else { return nil }
@@ -887,9 +885,6 @@ actor DisassemblerEngine {
     }
 
     private func decodeARM64Instruction(insn: UInt32, address: UInt64) -> (String, String, InstructionType, UInt64?) {
-        // Extract common fields
-        let op0 = (insn >> 25) & 0xF
-
         // NOP
         if insn == 0xD503201F {
             return ("nop", "", .nop, nil)
@@ -1834,7 +1829,7 @@ actor DisassemblerEngine {
         let rm = Int(modrm & 0x07) + (rexB ? 8 : 0)
 
         let xmmName = xmmRegisterName(reg)
-        var size = 1
+        let size = 1
 
         if mod == 0x03 {
             let gprName = registerName64(rm, wide: rexW)
@@ -1855,7 +1850,7 @@ actor DisassemblerEngine {
         let rm = Int(modrm & 0x07) + (rexB ? 8 : 0)
 
         let gprName = registerName64(reg, wide: rexW)
-        var size = 1
+        let size = 1
 
         if mod == 0x03 {
             let xmmName = xmmRegisterName(rm)
@@ -2122,12 +2117,9 @@ actor DisassemblerEngine {
         var idx = startIdx + 1
 
         var vexR = true
-        var vexX = true
         var vexB = true
-        var vexW = false
         var vexL = false   // 0 = 128-bit, 1 = 256-bit
         var vexVVVV = 0
-        var mapSelect = 1  // Default to 0F map
 
         if vexByte == 0xC5 {
             // 2-byte VEX
@@ -2148,11 +2140,10 @@ actor DisassemblerEngine {
             idx += 2
 
             vexR = (vex1 & 0x80) == 0
-            vexX = (vex1 & 0x40) == 0
             vexB = (vex1 & 0x20) == 0
-            mapSelect = Int(vex1 & 0x1F)
+            _ = Int(vex1 & 0x1F)
 
-            vexW = (vex2 & 0x80) != 0
+            _ = (vex2 & 0x80) != 0
             vexVVVV = Int((~vex2 >> 3) & 0x0F)
             vexL = (vex2 & 0x04) != 0
             let pp = vex2 & 0x03

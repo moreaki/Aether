@@ -222,9 +222,9 @@ struct ConditionalJumpsView: View {
             patchStatus = "Error: Cannot find section for address"
             return
         }
-
         let sectionOffset = Int(jump.address - section.address)
         let byteOffset = jump.isLongJump ? sectionOffset + 1 : sectionOffset
+        _ = byteOffset
 
         // Update status
         let oldMnem = jump.isPatched ? jump.flippedMnemonic : jump.originalMnemonic

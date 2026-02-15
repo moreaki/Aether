@@ -436,7 +436,6 @@ class AppState: ObservableObject {
         guard !instructions.isEmpty else { return [] }
 
         var blocks: [BasicBlock] = []
-        var currentBlockStart = 0
         var leaders: Set<UInt64> = [instructions[0].address]
 
         // Find all leaders (start of basic blocks)
@@ -487,10 +486,7 @@ class AppState: ObservableObject {
 
         var indent = "    "
         var pendingElse = false
-        var loopStack: [UInt64] = []
-
-        for (index, insn) in instructions.enumerated() {
-            let addr = String(format: "0x%llX", insn.address)
+        for insn in instructions {
 
             switch insn.type {
             case .conditionalJump:
@@ -1047,7 +1043,7 @@ class AppState: ObservableObject {
             return
         }
 
-        guard let binary = currentFile, let function = selectedFunction else {
+        guard let function = selectedFunction else {
             fridaScriptError = "Please select a function first"
             showFridaScript = true
             return
@@ -1512,7 +1508,7 @@ class AppState: ObservableObject {
             bookmarks.removeAll { $0.id == bookmark.id }
         case .removeBookmark(let bookmark):
             bookmarks.append(bookmark)
-        case .patchBytes(let address, let oldBytes, _):
+        case .patchBytes(_, _, _):
             // Would need patcher integration
             break
         }
@@ -1536,7 +1532,7 @@ class AppState: ObservableObject {
             bookmarks.append(bookmark)
         case .removeBookmark(let bookmark):
             bookmarks.removeAll { $0.id == bookmark.id }
-        case .patchBytes(let address, _, let newBytes):
+        case .patchBytes(_, _, _):
             // Would need patcher integration
             break
         }
