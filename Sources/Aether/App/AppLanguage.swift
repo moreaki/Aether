@@ -24,6 +24,18 @@ struct AppLanguage: Identifiable, Hashable {
         return Self.localizedName(for: code)
     }
 
+    var flagEmoji: String {
+        if isSystem {
+            return "🌐"
+        }
+
+        return Self.flagEmoji(forLanguageCode: code) ?? "🏳️"
+    }
+
+    var pickerLabel: String {
+        "\(flagEmoji) \(displayName)"
+    }
+
     init(code: String) {
         self.code = Self.normalizeLanguageCode(code)
     }
@@ -105,5 +117,37 @@ struct AppLanguage: Identifiable, Hashable {
             ?? code
 
         return localized.capitalized(with: locale)
+    }
+
+    private static func flagEmoji(forLanguageCode languageCode: String) -> String? {
+        guard #available(macOS 13.0, *) else { return nil }
+
+        let maximal = Locale.Language(identifier: languageCode).maximalIdentifier
+        let parts = maximal.split(separator: "-")
+
+        guard let region = parts.last, region.count == 2 else {
+            return nil
+        }
+
+        return flagEmoji(fromRegionCode: String(region))
+    }
+
+    private static func flagEmoji(fromRegionCode regionCode: String) -> String? {
+        let upper = regionCode.uppercased()
+        guard upper.count == 2, upper.unicodeScalars.allSatisfy({ $0.value >= 65 && $0.value <= 90 }) else {
+            return nil
+        }
+
+        let base: UInt32 = 127_397
+        var scalars = String.UnicodeScalarView()
+
+        for scalar in upper.unicodeScalars {
+            guard let regional = UnicodeScalar(base + scalar.value) else {
+                return nil
+            }
+            scalars.append(regional)
+        }
+
+        return String(scalars)
     }
 }

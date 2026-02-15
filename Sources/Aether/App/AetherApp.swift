@@ -251,7 +251,7 @@ struct GeneralSettingsView: View {
         Form {
             Picker(translate("settings.general.language"), selection: $appLanguage) {
                 ForEach(AppLanguage.available) { language in
-                    Text(language.displayName).tag(language.code)
+                    Text(language.pickerLabel).tag(language.code)
                 }
             }
             Toggle(translate("settings.general.autoAnalyze"), isOn: $autoAnalyze)
