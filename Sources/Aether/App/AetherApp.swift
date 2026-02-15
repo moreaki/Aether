@@ -17,7 +17,7 @@ struct AetherApp: App {
         .windowStyle(.hiddenTitleBar)
         .commands {
             CommandGroup(replacing: .appInfo) {
-                Button("About Aether") {
+                Button(translate("about.menu.title")) {
                     AboutWindowManager.shared.open()
                 }
             }
@@ -443,7 +443,7 @@ final class AboutWindowManager {
 
         let controller = NSHostingController(rootView: AboutView())
         let aboutWindow = NSWindow(contentViewController: controller)
-        aboutWindow.title = "About Aether"
+        aboutWindow.title = translate("about.window.title")
         aboutWindow.styleMask = [.titled, .closable, .miniaturizable, .resizable]
         aboutWindow.setContentSize(NSSize(width: 620, height: 620))
         aboutWindow.contentMinSize = NSSize(width: 620, height: 620)

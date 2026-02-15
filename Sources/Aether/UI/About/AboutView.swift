@@ -3,10 +3,10 @@ import CryptoKit
 import AppKit
 
 struct AboutView: View {
-    @State private var executableSHA256 = "Calculating..."
+    @State private var executableSHA256 = translate("about.hash.calculating")
     @State private var isHashing = false
     @State private var showLicenseSheet = false
-    @State private var licenseText = "License text is unavailable in this build."
+    @State private var licenseText = translate("about.license.unavailable")
     @State private var didLoad = false
 
     private let buildInfo = BuildInfo.current
@@ -78,10 +78,10 @@ struct AboutView: View {
             VStack(alignment: .leading, spacing: 5) {
                 Text("Aether")
                     .font(.system(size: 34, weight: .bold, design: .rounded))
-                Text("Beyond the binary, into the essence.")
+                Text(translate("about.tagline"))
                     .font(.subheadline)
                     .foregroundStyle(secondaryText)
-                Text("Version \(buildInfo.version) (\(buildInfo.build))")
+                Text(String(format: translate("about.version.format"), buildInfo.version, buildInfo.build))
                     .font(.system(.headline, design: .monospaced))
                     .foregroundStyle(accentText)
             }
@@ -94,13 +94,13 @@ struct AboutView: View {
 
     private var buildDetailsCard: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Label("Build Details", systemImage: "wrench.and.screwdriver")
+            Label(translate("about.section.buildDetails"), systemImage: "wrench.and.screwdriver")
                 .font(.headline)
 
-            AboutRow(label: "Built", value: buildInfo.timestampDisplay)
-            AboutRow(label: "Source", value: buildInfo.commit)
-            AboutRow(label: "Target Architecture", value: buildInfo.targetArchitecture)
-            AboutRow(label: "Running Architecture", value: buildInfo.runningArchitecture)
+            AboutRow(label: translate("about.field.built"), value: buildInfo.timestampDisplay)
+            AboutRow(label: translate("about.field.source"), value: buildInfo.commit)
+            AboutRow(label: translate("about.field.targetArch"), value: buildInfo.targetArchitecture)
+            AboutRow(label: translate("about.field.runningArch"), value: buildInfo.runningArchitecture)
         }
         .padding(16)
         .background(cardBackground)
@@ -108,7 +108,7 @@ struct AboutView: View {
 
     private var integrityCard: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Label("Integrity Fingerprint", systemImage: "checkmark.shield")
+            Label(translate("about.section.integrity"), systemImage: "checkmark.shield")
                 .font(.headline)
 
             Text(executableSHA256)
@@ -122,13 +122,13 @@ struct AboutView: View {
                 )
 
             HStack(spacing: 10) {
-                Button("Copy SHA-256") {
+                Button(translate("about.action.copySha")) {
                     copyToClipboard(executableSHA256)
                 }
                 .disabled(isHashing)
                 .buttonStyle(.bordered)
 
-                Button("Copy Build Report") {
+                Button(translate("about.action.copyReport")) {
                     copyToClipboard(buildReport)
                 }
                 .disabled(isHashing)
@@ -147,10 +147,10 @@ struct AboutView: View {
     private var licenseCard: some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack {
-                Label("License", systemImage: "doc.text")
+                Label(translate("about.section.license"), systemImage: "doc.text")
                     .font(.headline)
                 Spacer(minLength: 0)
-                Button("View License Text") {
+                Button(translate("about.action.viewLicense")) {
                     showLicenseSheet = true
                 }
                 .buttonStyle(.bordered)
@@ -165,7 +165,7 @@ struct AboutView: View {
     }
 
     private var verificationNote: some View {
-        Text("Compare the SHA-256 value above with checksums published by the authoritative release source to verify this executable.")
+        Text(translate("about.verification.note"))
             .font(.footnote)
             .foregroundStyle(secondaryText)
             .padding(.horizontal, 4)
@@ -173,15 +173,15 @@ struct AboutView: View {
 
     private var buildReport: String {
         """
-        Aether Build Report
-        Version: \(buildInfo.version)
-        Build: \(buildInfo.build)
-        Built: \(buildInfo.timestampRaw)
-        Source: \(buildInfo.commit)
-        Target Architecture: \(buildInfo.targetArchitecture)
-        Running Architecture: \(buildInfo.runningArchitecture)
-        License: \(buildInfo.license)
-        Executable SHA-256: \(executableSHA256)
+        \(translate("about.report.title"))
+        \(translate("about.report.version")): \(buildInfo.version)
+        \(translate("about.report.build")): \(buildInfo.build)
+        \(translate("about.report.built")): \(buildInfo.timestampRaw)
+        \(translate("about.report.source")): \(buildInfo.commit)
+        \(translate("about.report.targetArch")): \(buildInfo.targetArchitecture)
+        \(translate("about.report.runningArch")): \(buildInfo.runningArchitecture)
+        \(translate("about.report.license")): \(buildInfo.license)
+        \(translate("about.report.sha256")): \(executableSHA256)
         """
     }
 
@@ -199,7 +199,7 @@ struct AboutView: View {
         isHashing = true
 
         DispatchQueue.global(qos: .utility).async {
-            let hash = Self.computeExecutableSHA256() ?? "Unavailable"
+            let hash = Self.computeExecutableSHA256() ?? translate("about.hash.unavailable")
             DispatchQueue.main.async {
                 executableSHA256 = hash
                 isHashing = false
