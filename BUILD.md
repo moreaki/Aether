@@ -6,6 +6,7 @@ This project includes `scripts/build_dmg.sh` to produce a distributable macOS DM
 - Default build target: universal (`arm64` + `x86_64`)
 - Signs the `.app` and `.dmg`
 - Notarizes and staples both (unless `--skip-notarization`)
+- Generates checksum/manifest artifacts for verification publishing
 
 ## What "can run on any computer" means on macOS
 
@@ -109,6 +110,10 @@ By default, the script sets:
 
 - `CFBundleShortVersionString` from `APP_VERSION` (what macOS shows as `Version X.Y.Z`)
 - `CFBundleVersion` from `APP_BUILD` (defaults to git short hash)
+- `AetherBuildTimestamp` from current UTC time
+- `AetherBuildCommit` from git short hash
+- `AetherBuildTargetArch` from `--arch`
+- `AetherLicense` from `LICENSE_NAME` (default `MIT License`)
 
 So About shows `Version X.Y.Z (<build-info>)` instead of duplicating the same value twice.
 
@@ -121,12 +126,32 @@ scripts/build_dmg.sh --help
 - `--bundle-id <id>`: CFBundleIdentifier in `Info.plist`
 - `--version <semver>`: app short/build version
 - `--arch <target>`: `universal` (default), `arm64`, or `x86_64`
+- `--app-only`: build/sign only `dist/Aether-<arch>.app` (no DMG/notarization)
+- `--open-app`: open the resulting app bundle after build
 - `--skip-notarization`: sign only, skip notary submission/stapling
 
 Additional env var:
 
 - `APP_BUILD`: explicit build info for `CFBundleVersion` (for example `a1b2c3d4` or CI build number)
 - `TARGET_ARCH`: same as `--arch`
+- `BUILD_TIMESTAMP`: explicit UTC timestamp in ISO8601 format
+- `BUILD_COMMIT`: explicit source marker (commit, tag, or CI revision)
+- `LICENSE_NAME`: license label shown in About
+
+## Integrity artifacts generated
+
+For each build, the script writes:
+
+- `dist/Aether-<arch>.dmg`
+- `dist/Aether-<arch>.dmg.sha256`
+- `dist/Aether-<arch>.app-executable.sha256`
+- `dist/Aether-<arch>.build-manifest.json`
+
+Recommended release publishing:
+
+1. Publish the DMG
+2. Publish the `.dmg.sha256` and `.build-manifest.json`
+3. Optionally publish the executable checksum file for in-app SHA comparison
 
 ## Resource handling in the DMG build
 
@@ -153,12 +178,59 @@ APP_SIGN_IDENTITY="-" scripts/build_dmg.sh --skip-notarization
 
 This uses ad-hoc signing and is not suitable for public distribution.
 
+## Run from IntelliJ as a real `.app` bundle
+
+`SwiftRunPackage` runs the executable directly, not from an `.app` bundle.  
+That is why App-menu behavior (including About integration) can differ from installed/package builds.
+
+Use the helper script to run the app as a bundle locally:
+
+```bash
+scripts/run_app_bundle.sh
+```
+
+This defaults to your host architecture (`arm64` on Apple Silicon, `x86_64` on Intel), builds `dist/Aether-<arch>.app`, and launches it.
+
+To force universal:
+
+```bash
+scripts/run_app_bundle.sh --arch universal
+```
+
+IntelliJ Run Configuration (recommended):
+
+1. Run | Edit Configurations...
+2. Add New Configuration | Shell Script
+3. Name: `Aether (Run App Bundle)`
+4. Script path: `$PROJECT_DIR$/scripts/run_app_bundle.sh`
+5. Working directory: `$PROJECT_DIR$`
+6. Run
+
+Optional env vars in that config:
+
+- `APP_VERSION=1.2.1` (or your target version)
+
+By default, `scripts/run_app_bundle.sh` always uses ad-hoc signing (`-`) to avoid keychain/timestamp prompts.
+If you need certificate signing for local runs, pass it explicitly:
+
+```bash
+scripts/run_app_bundle.sh --sign-identity "Developer ID Application: Your Name (ABCDE12345)"
+```
+
+or set:
+
+```bash
+RUN_APP_SIGN_IDENTITY="Developer ID Application: Your Name (ABCDE12345)" scripts/run_app_bundle.sh
+```
+
 ## Verify output
 
 After build:
 
 ```bash
 ls -lh dist/Aether-*.dmg
+cat dist/Aether-universal.dmg.sha256
+cat dist/Aether-universal.build-manifest.json
 spctl -a -vvv -t open dist/Aether-universal.dmg
 ```
 
