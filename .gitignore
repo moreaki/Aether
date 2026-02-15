@@ -28,6 +28,7 @@ xcuserdata/
 *.swp
 *.swo
 *~
+.run
 
 # Temporary files
 *.tmp
