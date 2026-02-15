@@ -16,23 +16,30 @@ TARGET_ARCH="${TARGET_ARCH:-universal}"
 BUNDLE_ID="${BUNDLE_ID:-com.aether.app}"
 APP_VERSION="${APP_VERSION:-}"
 APP_BUILD="${APP_BUILD:-}"
+BUILD_TIMESTAMP="${BUILD_TIMESTAMP:-}"
+BUILD_COMMIT="${BUILD_COMMIT:-}"
+LICENSE_NAME="${LICENSE_NAME:-MIT License}"
 MIN_MACOS_VERSION="${MIN_MACOS_VERSION:-14.0}"
 DMG_VOLUME_NAME="${DMG_VOLUME_NAME:-Aether}"
+APP_ONLY="${APP_ONLY:-0}"
+OPEN_APP="${OPEN_APP:-0}"
 
 usage() {
   cat <<USAGE
 Usage: $(basename "$0") [options]
 
-Builds Aether.app, signs it, notarizes it, and outputs dist/Aether-<arch>.dmg.
+Builds Aether.app and by default also signs/notarizes/outputs dist/Aether-<arch>.dmg.
 
 Options:
   --version <semver>        App version (default: latest git tag or 0.0.0)
   --arch <target>           universal (default), arm64, x86_64
   --bundle-id <id>          Bundle identifier (default: com.aether.app)
+  --app-only                Build/sign app bundle only (no DMG/notarization)
+  --open-app                Open resulting app bundle when done
   --skip-notarization       Skip notarization/stapling
   -h, --help                Show this help
 
-Required env vars:
+Required env vars (unless --app-only is used):
   APP_SIGN_IDENTITY         Developer ID Application identity for codesign
 
 Required unless --skip-notarization is used:
@@ -41,6 +48,9 @@ Required unless --skip-notarization is used:
 Optional env vars:
   APP_VERSION               Same as --version
   APP_BUILD                 CFBundleVersion (default: git short hash, fallback APP_VERSION)
+  BUILD_TIMESTAMP           ISO8601 UTC timestamp (default: current UTC time)
+  BUILD_COMMIT              Source revision marker (default: git short hash)
+  LICENSE_NAME              License label shown in About window (default: MIT License)
   TARGET_ARCH               Same as --arch
   BUNDLE_ID                 Same as --bundle-id
   MIN_MACOS_VERSION         Defaults to 14.0
@@ -61,6 +71,14 @@ while [[ $# -gt 0 ]]; do
     --bundle-id)
       BUNDLE_ID="$2"
       shift 2
+      ;;
+    --app-only)
+      APP_ONLY=1
+      shift
+      ;;
+    --open-app)
+      OPEN_APP=1
+      shift
       ;;
     --skip-notarization)
       SKIP_NOTARIZATION=1
@@ -139,9 +157,17 @@ resolve_release_dir() {
   printf '%s\n' "${path}"
 }
 
+if [[ "${APP_ONLY}" == "1" ]]; then
+  SKIP_NOTARIZATION=1
+fi
+
 if [[ -z "${APP_SIGN_IDENTITY}" ]]; then
-  echo "APP_SIGN_IDENTITY is required." >&2
-  exit 1
+  if [[ "${APP_ONLY}" == "1" ]]; then
+    APP_SIGN_IDENTITY="-"
+  else
+    echo "APP_SIGN_IDENTITY is required." >&2
+    exit 1
+  fi
 fi
 
 if [[ "${TARGET_ARCH}" != "universal" && "${TARGET_ARCH}" != "arm64" && "${TARGET_ARCH}" != "x86_64" ]]; then
@@ -171,20 +197,39 @@ if [[ -z "${APP_BUILD}" ]]; then
   APP_BUILD="${APP_VERSION}"
 fi
 
+if [[ -z "${BUILD_TIMESTAMP}" ]]; then
+  BUILD_TIMESTAMP="$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
+fi
+
+if [[ -z "${BUILD_COMMIT}" ]]; then
+  BUILD_COMMIT="$(git -C "${ROOT_DIR}" rev-parse --short=12 HEAD 2>/dev/null || true)"
+fi
+
+if [[ -z "${BUILD_COMMIT}" ]]; then
+  BUILD_COMMIT="${APP_BUILD}"
+fi
+
 require_cmd swift
 require_cmd lipo
 require_cmd codesign
-require_cmd hdiutil
-require_cmd ditto
-require_cmd xcrun
 require_cmd sips
 require_cmd iconutil
+if [[ "${APP_ONLY}" != "1" ]]; then
+  require_cmd hdiutil
+fi
+if [[ "${SKIP_NOTARIZATION}" != "1" ]]; then
+  require_cmd ditto
+  require_cmd xcrun
+fi
+if [[ "${OPEN_APP}" == "1" ]]; then
+  require_cmd open
+fi
 
 log "Cleaning previous artifacts"
 rm -rf "${WORK_DIR}" "${DIST_DIR}"
 mkdir -p "${WORK_DIR}" "${DIST_DIR}"
 
-log "Build metadata: version=${APP_VERSION}, build=${APP_BUILD}, arch=${TARGET_ARCH}"
+log "Build metadata: version=${APP_VERSION}, build=${APP_BUILD}, commit=${BUILD_COMMIT}, arch=${TARGET_ARCH}"
 
 APP_DIR="${WORK_DIR}/${APP_NAME}.app"
 mkdir -p "${APP_DIR}/Contents/MacOS" "${APP_DIR}/Contents/Resources"
@@ -247,6 +292,10 @@ if [[ -d "${PROJECT_RESOURCES_DIR}" ]]; then
   cp -R "${PROJECT_RESOURCES_DIR}/." "${APP_DIR}/Contents/Resources/AetherResources/"
 fi
 
+if [[ -f "${ROOT_DIR}/LICENSE" ]]; then
+  cp "${ROOT_DIR}/LICENSE" "${APP_DIR}/Contents/Resources/LICENSE.txt"
+fi
+
 log "Generating AppIcon.icns from source iconset (if available)"
 generate_app_icon_icns \
   "${PROJECT_RESOURCES_DIR}/Assets.xcassets/AppIcon.appiconset" \
@@ -276,6 +325,14 @@ cat > "${APP_DIR}/Contents/Info.plist" <<PLIST
   <string>${APP_VERSION}</string>
   <key>CFBundleVersion</key>
   <string>${APP_BUILD}</string>
+  <key>AetherBuildTimestamp</key>
+  <string>${BUILD_TIMESTAMP}</string>
+  <key>AetherBuildTargetArch</key>
+  <string>${TARGET_ARCH}</string>
+  <key>AetherBuildCommit</key>
+  <string>${BUILD_COMMIT}</string>
+  <key>AetherLicense</key>
+  <string>${LICENSE_NAME}</string>
   <key>LSMinimumSystemVersion</key>
   <string>${MIN_MACOS_VERSION}</string>
   <key>NSHighResolutionCapable</key>
@@ -287,7 +344,12 @@ cat > "${APP_DIR}/Contents/Info.plist" <<PLIST
 PLIST
 
 log "Signing app bundle"
-codesign --force --timestamp --options runtime --sign "${APP_SIGN_IDENTITY}" "${APP_DIR}"
+if [[ "${APP_ONLY}" == "1" ]]; then
+  # Local run path: avoid timestamp/runtime requirements that can block on keychain/network.
+  codesign --force --sign "${APP_SIGN_IDENTITY}" "${APP_DIR}"
+else
+  codesign --force --timestamp --options runtime --sign "${APP_SIGN_IDENTITY}" "${APP_DIR}"
+fi
 codesign --verify --deep --strict --verbose=2 "${APP_DIR}"
 
 if [[ "${SKIP_NOTARIZATION}" != "1" ]]; then
@@ -301,6 +363,43 @@ if [[ "${SKIP_NOTARIZATION}" != "1" ]]; then
   log "Stapling notarization ticket to app"
   xcrun stapler staple "${APP_DIR}"
   xcrun stapler validate "${APP_DIR}"
+fi
+
+FINAL_APP="${DIST_DIR}/${APP_NAME}-${TARGET_ARCH}.app"
+rm -rf "${FINAL_APP}"
+cp -R "${APP_DIR}" "${FINAL_APP}"
+
+APP_EXEC_SHA256="$(shasum -a 256 "${APP_DIR}/Contents/MacOS/${APP_NAME}" | awk '{print $1}')"
+APP_SHA_FILE="${DIST_DIR}/${APP_NAME}-${TARGET_ARCH}.app-executable.sha256"
+printf '%s  %s\n' "${APP_EXEC_SHA256}" "${APP_NAME}.app/Contents/MacOS/${APP_NAME}" > "${APP_SHA_FILE}"
+
+if [[ "${APP_ONLY}" == "1" ]]; then
+  MANIFEST_FILE="${DIST_DIR}/${APP_NAME}-${TARGET_ARCH}.build-manifest.json"
+  cat > "${MANIFEST_FILE}" <<JSON
+{
+  "app_name": "${APP_NAME}",
+  "bundle_id": "${BUNDLE_ID}",
+  "version": "${APP_VERSION}",
+  "build": "${APP_BUILD}",
+  "build_timestamp_utc": "${BUILD_TIMESTAMP}",
+  "build_commit": "${BUILD_COMMIT}",
+  "target_arch": "${TARGET_ARCH}",
+  "license": "${LICENSE_NAME}",
+  "app_bundle": "$(basename "${FINAL_APP}")",
+  "app_executable_sha256": "${APP_EXEC_SHA256}"
+}
+JSON
+
+  log "Done"
+  echo "App: ${FINAL_APP}"
+  echo "App executable SHA256: ${APP_EXEC_SHA256}"
+  echo "Checksum file: ${APP_SHA_FILE}"
+  echo "Manifest: ${MANIFEST_FILE}"
+  if [[ "${OPEN_APP}" == "1" ]]; then
+    open "${FINAL_APP}"
+    echo "Opened: ${FINAL_APP}"
+  fi
+  exit 0
 fi
 
 log "Preparing DMG staging folder"
@@ -334,7 +433,33 @@ if [[ "${SKIP_NOTARIZATION}" != "1" ]]; then
 fi
 
 mv -f "${UNSIGNED_DMG}" "${FINAL_DMG}"
+DMG_SHA256="$(shasum -a 256 "${FINAL_DMG}" | awk '{print $1}')"
+DMG_SHA_FILE="${FINAL_DMG}.sha256"
+MANIFEST_FILE="${DIST_DIR}/${APP_NAME}-${TARGET_ARCH}.build-manifest.json"
+
+printf '%s  %s\n' "${APP_EXEC_SHA256}" "${APP_NAME}.app/Contents/MacOS/${APP_NAME}" > "${APP_SHA_FILE}"
+printf '%s  %s\n' "${DMG_SHA256}" "$(basename "${FINAL_DMG}")" > "${DMG_SHA_FILE}"
+
+cat > "${MANIFEST_FILE}" <<JSON
+{
+  "app_name": "${APP_NAME}",
+  "bundle_id": "${BUNDLE_ID}",
+  "version": "${APP_VERSION}",
+  "build": "${APP_BUILD}",
+  "build_timestamp_utc": "${BUILD_TIMESTAMP}",
+  "build_commit": "${BUILD_COMMIT}",
+  "target_arch": "${TARGET_ARCH}",
+  "license": "${LICENSE_NAME}",
+  "app_executable_sha256": "${APP_EXEC_SHA256}",
+  "dmg_file": "$(basename "${FINAL_DMG}")",
+  "dmg_sha256": "${DMG_SHA256}"
+}
+JSON
 
 log "Done"
 echo "DMG: ${FINAL_DMG}"
-shasum -a 256 "${FINAL_DMG}"
+echo "DMG SHA256: ${DMG_SHA256}"
+echo "App executable SHA256: ${APP_EXEC_SHA256}"
+echo "Checksum file: ${DMG_SHA_FILE}"
+echo "Checksum file: ${APP_SHA_FILE}"
+echo "Manifest: ${MANIFEST_FILE}"
