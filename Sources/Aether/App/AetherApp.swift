@@ -332,6 +332,10 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
+    func applicationWillTerminate(_ notification: Notification) {
+        VineflowerDecompiler.cleanupStaleAetherVineflowerProcesses()
+    }
+
     @MainActor
     private func setAppIcon() {
         let icon = generateAppIcon(size: 512)
