@@ -112,8 +112,8 @@ struct ToolbarView: View {
 
             // AI Features
             HStack(spacing: 8) {
-                if appState.hasAIAPIKey {
-                    Menu {
+                Menu {
+                    if appState.hasAIAPIKey {
                         // Chat
                         Button {
                             appState.showAIChat = true
@@ -154,38 +154,44 @@ struct ToolbarView: View {
                             Label("Analyze Binary", systemImage: "doc.viewfinder")
                         }
                         .disabled(appState.currentFile == nil)
-                    } label: {
-                        VStack(spacing: 2) {
-                            Image(systemName: "brain")
-                                .font(.system(size: 16))
-                                .foregroundColor(.purple)
-                            Text("AI")
-                                .font(.caption2)
-                        }
-                        .frame(minWidth: 40)
-                        .padding(.vertical, 4)
-                        .padding(.horizontal, 8)
-                    }
-                    .menuStyle(.borderlessButton)
-                } else {
-                    ToolbarButton(
-                        icon: "brain",
-                        label: "AI",
-                        shortcut: nil
-                    ) {
-                        openSettings()
-                    }
-                    .opacity(0.5)
-                    .help("Configure API key in Settings")
-                }
 
-                ToolbarButton(
-                    icon: "gear",
-                    label: "Settings",
-                    shortcut: ","
-                ) {
-                    openSettings()
+                        Divider()
+
+                        // Malware Flow
+                        Button {
+                            appState.showMalwareFlow = true
+                        } label: {
+                            Label("Malware Behavior Flow", systemImage: "arrow.triangle.branch")
+                        }
+                        .disabled(appState.currentFile == nil)
+                    } else {
+                        Button {
+                            openSettings()
+                        } label: {
+                            Label("Set API Key in Settings...", systemImage: "key")
+                        }
+                    }
+                } label: {
+                    VStack(spacing: 2) {
+                        Image(systemName: "brain")
+                            .font(.system(size: 16))
+                            .foregroundColor(appState.hasAIAPIKey ? .purple : .secondary)
+                        Text("AI")
+                            .font(.caption2)
+                    }
+                    .frame(minWidth: 40)
+                    .padding(.vertical, 4)
+                    .padding(.horizontal, 8)
                 }
+                .menuStyle(.borderlessButton)
+            }
+
+            ToolbarButton(
+                icon: "gear",
+                label: "Settings",
+                shortcut: ","
+            ) {
+                openSettings()
             }
 
             Divider()
@@ -216,6 +222,13 @@ struct ToolbarView: View {
                 } label: {
                     Label("Entropy Analysis", systemImage: "chart.bar")
                 }
+
+                Button {
+                    appState.showMalwareFlow = true
+                } label: {
+                    Label("AI Behavior Flow", systemImage: "arrow.triangle.branch")
+                }
+                .disabled(!appState.hasAIAPIKey)
 
                 Button {
                     appState.showImportExportBrowser = true

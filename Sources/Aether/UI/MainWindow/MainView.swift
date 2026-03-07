@@ -129,6 +129,10 @@ struct MainView: View {
             EntropyView()
                 .environmentObject(appState)
         }
+        .sheet(isPresented: $appState.showMalwareFlow) {
+            MalwareFlowView()
+                .environmentObject(appState)
+        }
         .onDrop(of: [UTType.fileURL], isTargeted: $isTargeted) { providers in
             handleDrop(providers: providers)
         }

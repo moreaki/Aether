@@ -82,6 +82,12 @@ class AppState: ObservableObject {
     @Published var isAnalyzingMalware = false
     @Published var malwareReport: MalwareReport?
 
+    // MARK: - Malware Flow State
+    @Published var showMalwareFlow = false
+    @Published var isAnalyzingMalwareFlow = false
+    @Published var malwareFlowResult: MalwareFlowResult?
+    @Published var malwareFlowError: String?
+
     // MARK: - Advanced Analysis Results
     @Published var cryptoFindings: [AdvancedCryptoDetector.CryptoFinding] = []
     @Published var deobfuscationReport: DeobfuscationReportWrapper?
@@ -171,6 +177,9 @@ class AppState: ObservableObject {
         // Clear malware state
         malwareReport = nil
         isAnalyzingMalware = false
+        malwareFlowResult = nil
+        isAnalyzingMalwareFlow = false
+        malwareFlowError = nil
 
         // Clear caches
         symbolsByAddress = [:]
@@ -315,6 +324,77 @@ class AppState: ObservableObject {
             await MainActor.run { [weak self] in
                 self?.malwareReport = report
                 self?.isAnalyzingMalware = false
+            }
+        }
+    }
+
+    // MARK: - Malware Flow Analysis
+
+    var apiKey: String {
+        KeychainHelper.load(key: "AIAPIKey") ?? ""
+    }
+
+    func analyzeMalwareFlow() {
+        guard let binary = currentFile else { return }
+        guard let apiKey = KeychainHelper.load(key: "AIAPIKey"), !apiKey.isEmpty else {
+            malwareFlowError = "No API key configured. Please add your AI API key in Settings."
+            return
+        }
+
+        isAnalyzingMalwareFlow = true
+        malwareFlowResult = nil
+        malwareFlowError = nil
+
+        // Run malware analysis first if not done yet
+        if malwareReport == nil {
+            let analyzer = MalwareAnalyzer()
+            malwareReport = analyzer.analyze(binary: binary)
+        }
+
+        let report = malwareReport!
+
+        Task {
+            do {
+                let sectionData = binary.sections.map { section -> (name: String, size: UInt64, entropy: Double, permissions: String) in
+                    let sectionEntropy = report.entropyResult.sectionEntropies.first { $0.name == section.name }
+                    // PE flags: R=0x40000000, W=0x80000000, X=0x20000000
+                    let r = (section.flags & 0x40000000 != 0) || !section.isExecutable // default readable
+                    let w = section.flags & 0x80000000 != 0
+                    let x = section.isExecutable
+                    let perms = "\(r ? "R" : "-")\(w ? "W" : "-")\(x ? "X" : "-")"
+                    return (
+                        name: section.name,
+                        size: section.size,
+                        entropy: sectionEntropy?.entropy ?? 0,
+                        permissions: perms
+                    )
+                }
+
+                let importNames = imports.map { $0.name }
+                let exportNames = exports.map { $0.name }
+                let stringValues = strings.prefix(100).map { $0.value }
+                let anomalyDescs = report.anomalies.map { "\($0.severity.rawValue): \($0.title) - \($0.description)" }
+
+                let result = try await aiClient.analyzeMalwareFlowAsync(
+                    binaryName: binary.name,
+                    sections: sectionData,
+                    imports: importNames,
+                    exports: exportNames,
+                    strings: Array(stringValues),
+                    entropyOverall: report.entropyResult.overallEntropy,
+                    anomalies: anomalyDescs,
+                    apiKey: apiKey
+                )
+
+                await MainActor.run {
+                    self.malwareFlowResult = result
+                    self.isAnalyzingMalwareFlow = false
+                }
+            } catch {
+                await MainActor.run {
+                    self.malwareFlowError = error.localizedDescription
+                    self.isAnalyzingMalwareFlow = false
+                }
             }
         }
     }
