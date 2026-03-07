@@ -225,7 +225,7 @@ class AppState: ObservableObject {
             // Get functions from symbols
             let functions = binary.symbols
                 .filter { $0.type == .function && $0.address != 0 }
-                .map { Function(name: $0.name, startAddress: $0.address, endAddress: $0.address + max($0.size, 4)) }
+                .map { Function(name: $0.name, startAddress: $0.address, endAddress: $0.address + max($0.size, 256)) }
                 .sorted { $0.startAddress < $1.startAddress }
 
             try Task.checkCancellation()
@@ -678,11 +678,20 @@ class AppState: ObservableObject {
     // MARK: - Navigation
 
     func goToAddress(_ address: UInt64) {
-        selectedAddress = address
+        // First select the section so HexView loads the data
+        if let binary = currentFile,
+           let section = binary.sections.first(where: { $0.contains(address: address) }) {
+            selectedSection = section
+        }
 
         // Find function containing this address
         if let func_ = functions.first(where: { $0.contains(address: address) }) {
             selectedFunction = func_
+        }
+
+        // Set address after a short delay so the view has time to load data
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { [weak self] in
+            self?.selectedAddress = address
         }
     }
 

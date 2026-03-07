@@ -30,7 +30,7 @@ actor DisassemblerEngine {
 
     // MARK: - x86_64 Disassembly
 
-    private func disassembleX86_64(data: Data, address: UInt64) -> [Instruction] {
+    private func disassembleX86_64(data: Data, address: UInt64, is32bit: Bool = false) -> [Instruction] {
         var instructions: [Instruction] = []
         var offset = 0
         var currentAddress = address
@@ -44,7 +44,7 @@ actor DisassemblerEngine {
             let bytes = Array(data[offset..<endIdx])
             guard !bytes.isEmpty else { break }
 
-            guard let (mnemonic, operands, size, type, target) = decodeX86_64Instruction(bytes: bytes, address: currentAddress) else {
+            guard let (mnemonic, operands, size, type, target) = decodeX86_64Instruction(bytes: bytes, address: currentAddress, is32bit: is32bit) else {
                 // Unknown instruction, skip one byte
                 instructions.append(Instruction(
                     address: currentAddress,
@@ -52,7 +52,7 @@ actor DisassemblerEngine {
                     bytes: [bytes[0]],
                     mnemonic: "db",
                     operands: String(format: "0x%02X", bytes[0]),
-                    architecture: .x86_64,
+                    architecture: is32bit ? .i386 : .x86_64,
                     type: .other
                 ))
                 offset += 1
@@ -60,14 +60,14 @@ actor DisassemblerEngine {
                 continue
             }
 
-            let actualSize = min(size, bytes.count)
+            let actualSize = max(1, min(size, bytes.count))
             var instruction = Instruction(
                 address: currentAddress,
                 size: actualSize,
                 bytes: Array(bytes[0..<actualSize]),
                 mnemonic: mnemonic,
                 operands: operands,
-                architecture: .x86_64,
+                architecture: is32bit ? .i386 : .x86_64,
                 type: type
             )
             instruction.branchTarget = target
@@ -80,7 +80,7 @@ actor DisassemblerEngine {
         return instructions
     }
 
-    private func decodeX86_64Instruction(bytes: [UInt8], address: UInt64) -> (String, String, Int, InstructionType, UInt64?)? {
+    private func decodeX86_64Instruction(bytes: [UInt8], address: UInt64, is32bit: Bool = false) -> (String, String, Int, InstructionType, UInt64?)? {
         guard bytes.count >= 1 else { return nil }
 
         var idx = 0
@@ -96,7 +96,9 @@ actor DisassemblerEngine {
         var hasRepPrefix = false          // 0xF3
 
         // Check for legacy prefixes (0x66, 0xF2, 0xF3)
-        while idx < bytes.count {
+        var prefixIter = 0
+        while idx < bytes.count && prefixIter < 5 {
+            prefixIter += 1
             switch bytes[idx] {
             case 0x66:
                 hasOperandSizePrefix = true
@@ -122,8 +124,9 @@ actor DisassemblerEngine {
 
         let prefixCount = idx
 
-        // Check for REX prefix (0x40-0x4F)
-        if idx < bytes.count && bytes[idx] >= 0x40 && bytes[idx] <= 0x4F {
+        // Check for REX prefix (0x40-0x4F) — only in 64-bit mode
+        // In 32-bit mode, 0x40-0x47 = inc reg, 0x48-0x4F = dec reg
+        if !is32bit && idx < bytes.count && bytes[idx] >= 0x40 && bytes[idx] <= 0x4F {
             hasRex = true
             rexW = (bytes[idx] & 0x08) != 0
             rexR = (bytes[idx] & 0x04) != 0
@@ -133,8 +136,21 @@ actor DisassemblerEngine {
             guard idx < bytes.count else { return nil }
         }
 
-        // Check for VEX prefix (AVX)
-        if idx < bytes.count && (bytes[idx] == 0xC4 || bytes[idx] == 0xC5) {
+        // In 32-bit mode, handle INC/DEC register (0x40-0x4F)
+        if is32bit && idx < bytes.count && bytes[idx] >= 0x40 && bytes[idx] <= 0x4F {
+            let opcode = bytes[idx]
+            if opcode <= 0x47 {
+                let reg = registerName32(Int(opcode - 0x40))
+                return ("inc", reg, idx + 1, .arithmetic, nil)
+            } else {
+                let reg = registerName32(Int(opcode - 0x48))
+                return ("dec", reg, idx + 1, .arithmetic, nil)
+            }
+        }
+
+        // Check for VEX prefix (AVX) — only in 64-bit mode
+        // In 32-bit mode, 0xC4 = LES, 0xC5 = LDS
+        if !is32bit && idx < bytes.count && (bytes[idx] == 0xC4 || bytes[idx] == 0xC5) {
             return decodeVEXInstruction(bytes: bytes, startIdx: idx, address: address)
         }
 
@@ -162,19 +178,22 @@ actor DisassemblerEngine {
             let imm = UInt16(bytes[idx]) | (UInt16(bytes[idx + 1]) << 8)
             return ("ret", String(format: "0x%X", imm), 3 + (hasRex ? 1 : 0), .return, nil)
 
-        // PUSH r64
+        // PUSH r64/r32
         case 0x50...0x57:
-            let reg = registerName64(Int(opcode - 0x50) + (rexB ? 8 : 0))
+            let regIdx = Int(opcode - 0x50) + (rexB ? 8 : 0)
+            let reg = is32bit ? registerName32(regIdx) : registerName64(regIdx)
             return ("push", reg, 1 + (hasRex ? 1 : 0), .push, nil)
 
-        // POP r64
+        // POP r64/r32
         case 0x58...0x5F:
-            let reg = registerName64(Int(opcode - 0x58) + (rexB ? 8 : 0))
+            let regIdx = Int(opcode - 0x58) + (rexB ? 8 : 0)
+            let reg = is32bit ? registerName32(regIdx) : registerName64(regIdx)
             return ("pop", reg, 1 + (hasRex ? 1 : 0), .pop, nil)
 
-        // MOV r64, imm64
+        // MOV r64/r32, imm
         case 0xB8...0xBF:
-            let reg = registerName64(Int(opcode - 0xB8) + (rexB ? 8 : 0), wide: rexW)
+            let regIdx = Int(opcode - 0xB8) + (rexB ? 8 : 0)
+            let reg = is32bit ? registerName32(regIdx) : registerName64(regIdx, wide: rexW)
             if rexW {
                 guard idx + 7 < bytes.count else { return nil }
                 var imm: UInt64 = 0
@@ -198,8 +217,9 @@ actor DisassemblerEngine {
             for i in 0..<4 {
                 rel |= Int32(bytes[idx + i]) << (i * 8)
             }
-            let target = UInt64(Int64(address) + Int64(5 + (hasRex ? 1 : 0)) + Int64(rel))
-            return ("call", formatAddress(target), 5 + (hasRex ? 1 : 0), .call, target)
+            let instrSize = 5 + (hasRex ? 1 : 0)
+            let target = UInt64(bitPattern: Int64(address) + Int64(instrSize) + Int64(rel)) & (is32bit ? 0xFFFFFFFF : UInt64.max)
+            return ("call", formatAddress(target), instrSize, .call, target)
 
         // JMP rel32
         case 0xE9:
@@ -208,23 +228,26 @@ actor DisassemblerEngine {
             for i in 0..<4 {
                 rel |= Int32(bytes[idx + i]) << (i * 8)
             }
-            let target = UInt64(Int64(address) + Int64(5 + (hasRex ? 1 : 0)) + Int64(rel))
-            return ("jmp", formatAddress(target), 5 + (hasRex ? 1 : 0), .jump, target)
+            let instrSize = 5 + (hasRex ? 1 : 0)
+            let target = UInt64(bitPattern: Int64(address) + Int64(instrSize) + Int64(rel)) & (is32bit ? 0xFFFFFFFF : UInt64.max)
+            return ("jmp", formatAddress(target), instrSize, .jump, target)
 
         // JMP rel8
         case 0xEB:
             guard idx < bytes.count else { return nil }
             let rel = Int8(bitPattern: bytes[idx])
-            let target = UInt64(Int64(address) + Int64(2 + (hasRex ? 1 : 0)) + Int64(rel))
-            return ("jmp", formatAddress(target), 2 + (hasRex ? 1 : 0), .jump, target)
+            let instrSize = 2 + (hasRex ? 1 : 0)
+            let target = UInt64(bitPattern: Int64(address) + Int64(instrSize) + Int64(rel)) & (is32bit ? 0xFFFFFFFF : UInt64.max)
+            return ("jmp", formatAddress(target), instrSize, .jump, target)
 
         // Conditional jumps (rel8)
         case 0x70...0x7F:
             guard idx < bytes.count else { return nil }
             let rel = Int8(bitPattern: bytes[idx])
-            let target = UInt64(Int64(address) + Int64(2 + (hasRex ? 1 : 0)) + Int64(rel))
+            let instrSize = 2 + (hasRex ? 1 : 0)
+            let target = UInt64(bitPattern: Int64(address) + Int64(instrSize) + Int64(rel)) & (is32bit ? 0xFFFFFFFF : UInt64.max)
             let cond = conditionCode(Int(opcode - 0x70))
-            return ("j\(cond)", formatAddress(target), 2 + (hasRex ? 1 : 0), .conditionalJump, target)
+            return ("j\(cond)", formatAddress(target), instrSize, .conditionalJump, target)
 
         // Two-byte opcodes (0x0F prefix)
         case 0x0F:
@@ -240,9 +263,10 @@ actor DisassemblerEngine {
                 for i in 0..<4 {
                     rel |= Int32(bytes[idx + i]) << (i * 8)
                 }
-                let target = UInt64(Int64(address) + Int64(6 + prefixCount + (hasRex ? 1 : 0)) + Int64(rel))
+                let instrSize = 6 + prefixCount + (hasRex ? 1 : 0)
+                let target = UInt64(bitPattern: Int64(address) + Int64(instrSize) + Int64(rel)) & (is32bit ? 0xFFFFFFFF : UInt64.max)
                 let cond = conditionCode(Int(opcode2 - 0x80))
-                return ("j\(cond)", formatAddress(target), 6 + prefixCount + (hasRex ? 1 : 0), .conditionalJump, target)
+                return ("j\(cond)", formatAddress(target), instrSize, .conditionalJump, target)
 
             // SYSCALL
             case 0x05:
@@ -262,37 +286,37 @@ actor DisassemblerEngine {
             // MOVZX r32/64, r/m8
             case 0xB6:
                 guard idx < bytes.count else { return nil }
-                let (regOp, rmOp, size) = decodeModRM(bytes: bytes, idx: idx, rexR: rexR, rexB: rexB, rexW: rexW, is64: true, rmSize: 8)
+                let (regOp, rmOp, size) = decodeModRM(bytes: bytes, idx: idx, rexR: rexR, rexB: rexB, rexW: rexW, is64: true, rmSize: 8, is32bit: is32bit)
                 return ("movzx", "\(regOp), \(rmOp)", 2 + prefixCount + (hasRex ? 1 : 0) + size, .move, nil)
 
             // MOVZX r32/64, r/m16
             case 0xB7:
                 guard idx < bytes.count else { return nil }
-                let (regOp, rmOp, size) = decodeModRM(bytes: bytes, idx: idx, rexR: rexR, rexB: rexB, rexW: rexW, is64: true, rmSize: 16)
+                let (regOp, rmOp, size) = decodeModRM(bytes: bytes, idx: idx, rexR: rexR, rexB: rexB, rexW: rexW, is64: true, rmSize: 16, is32bit: is32bit)
                 return ("movzx", "\(regOp), \(rmOp)", 2 + prefixCount + (hasRex ? 1 : 0) + size, .move, nil)
 
             // MOVSX r32/64, r/m8
             case 0xBE:
                 guard idx < bytes.count else { return nil }
-                let (regOp, rmOp, size) = decodeModRM(bytes: bytes, idx: idx, rexR: rexR, rexB: rexB, rexW: rexW, is64: true, rmSize: 8)
+                let (regOp, rmOp, size) = decodeModRM(bytes: bytes, idx: idx, rexR: rexR, rexB: rexB, rexW: rexW, is64: true, rmSize: 8, is32bit: is32bit)
                 return ("movsx", "\(regOp), \(rmOp)", 2 + prefixCount + (hasRex ? 1 : 0) + size, .move, nil)
 
             // MOVSX r32/64, r/m16
             case 0xBF:
                 guard idx < bytes.count else { return nil }
-                let (regOp, rmOp, size) = decodeModRM(bytes: bytes, idx: idx, rexR: rexR, rexB: rexB, rexW: rexW, is64: true, rmSize: 16)
+                let (regOp, rmOp, size) = decodeModRM(bytes: bytes, idx: idx, rexR: rexR, rexB: rexB, rexW: rexW, is64: true, rmSize: 16, is32bit: is32bit)
                 return ("movsx", "\(regOp), \(rmOp)", 2 + prefixCount + (hasRex ? 1 : 0) + size, .move, nil)
 
             // IMUL r, r/m
             case 0xAF:
                 guard idx < bytes.count else { return nil }
-                let (regOp, rmOp, size) = decodeModRM(bytes: bytes, idx: idx, rexR: rexR, rexB: rexB, rexW: rexW, is64: true)
+                let (regOp, rmOp, size) = decodeModRM(bytes: bytes, idx: idx, rexR: rexR, rexB: rexB, rexW: rexW, is64: true, is32bit: is32bit)
                 return ("imul", "\(regOp), \(rmOp)", 2 + prefixCount + (hasRex ? 1 : 0) + size, .arithmetic, nil)
 
             // CMOV conditional moves
             case 0x40...0x4F:
                 guard idx < bytes.count else { return nil }
-                let (regOp, rmOp, size) = decodeModRM(bytes: bytes, idx: idx, rexR: rexR, rexB: rexB, rexW: rexW, is64: true)
+                let (regOp, rmOp, size) = decodeModRM(bytes: bytes, idx: idx, rexR: rexR, rexB: rexB, rexW: rexW, is64: true, is32bit: is32bit)
                 let cond = conditionCode(Int(opcode2 - 0x40))
                 return ("cmov\(cond)", "\(regOp), \(rmOp)", 2 + prefixCount + (hasRex ? 1 : 0) + size, .move, nil)
 
@@ -302,7 +326,7 @@ actor DisassemblerEngine {
                 let modrm = bytes[idx]
                 let rm = modrm & 0x07
                 let cond = conditionCode(Int(opcode2 - 0x90))
-                let rmName = registerName8(Int(rm) + (rexB ? 8 : 0))
+                let rmName = registerName8(Int(rm) + (rexB ? 8 : 0), hasRex: hasRex)
                 return ("set\(cond)", rmName, 3 + prefixCount + (hasRex ? 1 : 0), .other, nil)
 
             // SSE/SSE2 Instructions
@@ -741,13 +765,15 @@ actor DisassemblerEngine {
             let rm = modrm & 0x07
             idx += 1
 
-            let regName = registerName64(Int(reg) + (rexR ? 8 : 0), wide: rexW || opcode == 0x8D)
+            let regIdx = Int(reg) + (rexR ? 8 : 0)
+            let regName = is32bit ? registerName32(regIdx) : registerName64(regIdx, wide: rexW || opcode == 0x8D)
             var size = 2 + (hasRex ? 1 : 0)
             var rmOperand = ""
 
             if mod == 0x03 {
                 // Register direct
-                rmOperand = registerName64(Int(rm) + (rexB ? 8 : 0), wide: rexW || opcode == 0x8D)
+                let rmIdx = Int(rm) + (rexB ? 8 : 0)
+                rmOperand = is32bit ? registerName32(rmIdx) : registerName64(rmIdx, wide: rexW || opcode == 0x8D)
             } else {
                 // Memory operand (simplified)
                 if rm == 0x04 {
@@ -758,21 +784,33 @@ actor DisassemblerEngine {
                 }
 
                 if mod == 0x00 && rm == 0x05 {
-                    // RIP-relative
-                    guard idx + 3 < bytes.count else { return nil }
-                    var disp: Int32 = 0
-                    for i in 0..<4 {
-                        disp |= Int32(bytes[idx + i]) << (i * 8)
+                    if is32bit {
+                        // Absolute disp32 in 32-bit mode
+                        guard idx + 3 < bytes.count else { return nil }
+                        var disp: UInt32 = 0
+                        for i in 0..<4 {
+                            disp |= UInt32(bytes[idx + i]) << (i * 8)
+                        }
+                        size += 4
+                        rmOperand = String(format: "[0x%X]", disp)
+                    } else {
+                        // RIP-relative in 64-bit mode
+                        guard idx + 3 < bytes.count else { return nil }
+                        var disp: Int32 = 0
+                        for i in 0..<4 {
+                            disp |= Int32(bytes[idx + i]) << (i * 8)
+                        }
+                        size += 4
+                        let targetAddr = UInt64(bitPattern: Int64(address) + Int64(size) + Int64(disp))
+                        rmOperand = String(format: "[rip + 0x%llX]", targetAddr)
                     }
-                    size += 4
-                    let targetAddr = UInt64(Int64(address) + Int64(size) + Int64(disp))
-                    rmOperand = String(format: "[rip + 0x%llX]", targetAddr)
                 } else if mod == 0x01 {
                     // 8-bit displacement
                     guard idx < bytes.count else { return nil }
                     let disp = Int(Int8(bitPattern: bytes[idx]))  // Convert to Int to avoid overflow
                     size += 1
-                    let baseReg = registerName64(Int(rm) + (rexB ? 8 : 0))
+                    let rmIdx = Int(rm) + (rexB ? 8 : 0)
+                    let baseReg = is32bit ? registerName32(rmIdx) : registerName64(rmIdx)
                     if disp >= 0 {
                         rmOperand = "[\(baseReg) + \(disp)]"
                     } else {
@@ -786,10 +824,12 @@ actor DisassemblerEngine {
                         disp |= Int32(bytes[idx + i]) << (i * 8)
                     }
                     size += 4
-                    let baseReg = registerName64(Int(rm) + (rexB ? 8 : 0))
+                    let rmIdx = Int(rm) + (rexB ? 8 : 0)
+                    let baseReg = is32bit ? registerName32(rmIdx) : registerName64(rmIdx)
                     rmOperand = "[\(baseReg) + \(String(format: "0x%X", disp))]"
                 } else {
-                    rmOperand = "[\(registerName64(Int(rm) + (rexB ? 8 : 0)))]"
+                    let rmIdx = Int(rm) + (rexB ? 8 : 0)
+                    rmOperand = "[\(is32bit ? registerName32(rmIdx) : registerName64(rmIdx))]"
                 }
             }
 
@@ -1077,27 +1117,7 @@ actor DisassemblerEngine {
     // MARK: - 32-bit Disassembly (Simplified)
 
     private func disassembleX86(data: Data, address: UInt64) -> [Instruction] {
-        // Simplified - similar to x86_64 but 32-bit
-        var instructions: [Instruction] = []
-        var offset = 0
-        var currentAddress = address
-
-        while offset < data.count {
-            // For now, just mark as data bytes
-            instructions.append(Instruction(
-                address: currentAddress,
-                size: 1,
-                bytes: [data[offset]],
-                mnemonic: "db",
-                operands: String(format: "0x%02X", data[offset]),
-                architecture: .i386,
-                type: .other
-            ))
-            offset += 1
-            currentAddress += 1
-        }
-
-        return instructions
+        return disassembleX86_64(data: data, address: address, is32bit: true)
     }
 
     private func disassembleARM(data: Data, address: UInt64) -> [Instruction] {
@@ -1588,6 +1608,12 @@ actor DisassemblerEngine {
         return useYmm ? "ymm\(reg)" : "xmm\(reg)"
     }
 
+    private func registerName32(_ reg: Int) -> String {
+        let regs = ["eax", "ecx", "edx", "ebx", "esp", "ebp", "esi", "edi"]
+        guard reg >= 0 && reg < regs.count else { return "r\(reg)" }
+        return regs[reg]
+    }
+
     private func registerName64(_ reg: Int, wide: Bool = true) -> String {
         if reg == 31 {
             return wide ? "sp" : "esp"
@@ -1640,7 +1666,12 @@ actor DisassemblerEngine {
         return Int64(value)
     }
 
-    private func registerName8(_ reg: Int) -> String {
+    private func registerName8(_ reg: Int, hasRex: Bool = false) -> String {
+        // In 32-bit mode (no REX possible) or 64-bit without REX, regs 4-7 are ah/ch/dh/bh
+        if !hasRex && reg >= 4 && reg <= 7 {
+            let hiRegs = ["ah", "ch", "dh", "bh"]
+            return hiRegs[reg - 4]
+        }
         let regs = ["al", "cl", "dl", "bl", "spl", "bpl", "sil", "dil",
                     "r8b", "r9b", "r10b", "r11b", "r12b", "r13b", "r14b", "r15b"]
         guard reg >= 0 && reg < regs.count else { return "r\(reg)b" }
@@ -1649,7 +1680,7 @@ actor DisassemblerEngine {
 
     // MARK: - ModRM Decoding for General Purpose Registers
 
-    private func decodeModRM(bytes: [UInt8], idx: Int, rexR: Bool, rexB: Bool, rexW: Bool, is64: Bool, rmSize: Int = 0) -> (String, String, Int) {
+    private func decodeModRM(bytes: [UInt8], idx: Int, rexR: Bool, rexB: Bool, rexW: Bool, is64: Bool, rmSize: Int = 0, is32bit: Bool = false) -> (String, String, Int) {
         guard idx < bytes.count else { return ("?", "?", 0) }
 
         let modrm = bytes[idx]
@@ -1657,18 +1688,18 @@ actor DisassemblerEngine {
         let reg = Int((modrm >> 3) & 0x07) + (rexR ? 8 : 0)
         let rm = Int(modrm & 0x07) + (rexB ? 8 : 0)
 
-        let regName = registerName64(reg, wide: rexW || is64)
+        let regName = is32bit ? registerName32(reg) : registerName64(reg, wide: rexW || is64)
         var size = 1
 
         if mod == 0x03 {
             // Register direct
             let rmName: String
             if rmSize == 8 {
-                rmName = registerName8(rm)
+                rmName = registerName8(rm, hasRex: !is32bit && rexB)
             } else if rmSize == 16 {
                 rmName = registerName16(rm)
             } else {
-                rmName = registerName64(rm, wide: rexW || is64)
+                rmName = is32bit ? registerName32(rm) : registerName64(rm, wide: rexW || is64)
             }
             return (regName, rmName, size)
         }
@@ -1682,23 +1713,28 @@ actor DisassemblerEngine {
             guard idx + 1 < bytes.count else { return (regName, "[?]", size) }
             let sib = bytes[idx + 1]
             size += 1
-            rmOperand = decodeSIB(sib: sib, mod: mod, bytes: bytes, idx: idx + 2, rexB: rexB)
+            rmOperand = decodeSIB(sib: sib, mod: mod, bytes: bytes, idx: idx + 2, rexB: rexB, is32bit: is32bit)
             if mod == 0x01 { size += 1 }
             else if mod == 0x02 { size += 4 }
         } else if mod == 0x00 && baseRm == 0x05 {
-            // RIP-relative
-            guard idx + 4 < bytes.count else { return (regName, "[rip]", size) }
+            guard idx + 4 < bytes.count else { return (regName, is32bit ? "[disp32]" : "[rip]", size) }
             var disp: Int32 = 0
             for i in 0..<4 {
                 disp |= Int32(bytes[idx + 1 + i]) << (i * 8)
             }
             size += 4
-            rmOperand = String(format: "[rip + 0x%X]", disp)
+            if is32bit {
+                // Absolute disp32 in 32-bit mode
+                rmOperand = String(format: "[0x%X]", UInt32(bitPattern: disp))
+            } else {
+                // RIP-relative in 64-bit mode
+                rmOperand = String(format: "[rip + 0x%X]", disp)
+            }
         } else if mod == 0x01 {
             guard idx + 1 < bytes.count else { return (regName, "[?]", size) }
             let disp = Int(Int8(bitPattern: bytes[idx + 1]))
             size += 1
-            let baseReg = registerName64(rm)
+            let baseReg = is32bit ? registerName32(rm) : registerName64(rm)
             if disp >= 0 {
                 rmOperand = "[\(baseReg) + \(disp)]"
             } else {
@@ -1711,10 +1747,10 @@ actor DisassemblerEngine {
                 disp |= Int32(bytes[idx + 1 + i]) << (i * 8)
             }
             size += 4
-            let baseReg = registerName64(rm)
+            let baseReg = is32bit ? registerName32(rm) : registerName64(rm)
             rmOperand = String(format: "[\(baseReg) + 0x%X]", disp)
         } else {
-            rmOperand = "[\(registerName64(rm))]"
+            rmOperand = "[\(is32bit ? registerName32(rm) : registerName64(rm))]"
         }
 
         return (regName, rmOperand, size)
@@ -1727,7 +1763,7 @@ actor DisassemblerEngine {
         return regs[reg]
     }
 
-    private func decodeSIB(sib: UInt8, mod: UInt8, bytes: [UInt8], idx: Int, rexB: Bool) -> String {
+    private func decodeSIB(sib: UInt8, mod: UInt8, bytes: [UInt8], idx: Int, rexB: Bool, is32bit: Bool = false) -> String {
         let scale = 1 << ((sib >> 6) & 0x03)
         let index = Int((sib >> 3) & 0x07)
         let base = Int(sib & 0x07) + (rexB ? 8 : 0)
@@ -1744,11 +1780,11 @@ actor DisassemblerEngine {
                 result += String(format: "0x%X", disp)
             }
         } else {
-            result += registerName64(base)
+            result += is32bit ? registerName32(base) : registerName64(base)
         }
 
         if index != 4 {
-            let indexReg = registerName64(index)
+            let indexReg = is32bit ? registerName32(index) : registerName64(index)
             if result.count > 1 {
                 result += " + "
             }

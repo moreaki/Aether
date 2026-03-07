@@ -140,8 +140,10 @@ struct Section: Identifiable, Hashable {
     var fullName: String { "\(segmentName),\(name)" }
 
     var isExecutable: Bool {
-        // S_ATTR_PURE_INSTRUCTIONS or S_ATTR_SOME_INSTRUCTIONS
-        flags & 0x80000000 != 0 || flags & 0x00000400 != 0
+        // Mach-O: S_ATTR_PURE_INSTRUCTIONS or S_ATTR_SOME_INSTRUCTIONS
+        // PE: IMAGE_SCN_MEM_EXECUTE (0x20000000) or IMAGE_SCN_CNT_CODE (0x20)
+        flags & 0x80000000 != 0 || flags & 0x00000400 != 0 ||
+        flags & 0x20000000 != 0 || flags & 0x00000020 != 0
     }
 
     var isZeroFill: Bool {
@@ -150,7 +152,7 @@ struct Section: Identifiable, Hashable {
     }
 
     var containsCode: Bool {
-        isExecutable || name == "__text" || name == ".text"
+        isExecutable || name == "__text" || name == ".text" || name == ".code"
     }
 
     func contains(address addr: UInt64) -> Bool {

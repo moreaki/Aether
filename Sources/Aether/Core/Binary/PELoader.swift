@@ -182,6 +182,18 @@ class PELoader: BinaryLoaderProtocol {
         // Parse symbols (COFF symbol table, if present)
         var symbols = try parseSymbols(data: data, coffOffset: coffOffset, is64Bit: is64Bit)
 
+        // Add entry point as "start" function
+        if entryPointRVA != 0 {
+            symbols.append(Symbol(
+                name: "start",
+                address: entryPoint,
+                size: 0,
+                type: .function,
+                binding: .global,
+                section: ".text"
+            ))
+        }
+
         // Parse imports from IAT
         let importSymbols = parseImports(peInfo: peInfo)
         symbols.append(contentsOf: importSymbols)
