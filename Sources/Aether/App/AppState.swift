@@ -75,6 +75,13 @@ class AppState: ObservableObject {
     @Published var isGeneratingRenames = false
     @Published var renameError: String?
 
+    // MARK: - Malware Analysis State
+    @Published var showMalwareDashboard = false
+    @Published var showImportExportBrowser = false
+    @Published var showEntropyView = false
+    @Published var isAnalyzingMalware = false
+    @Published var malwareReport: MalwareReport?
+
     // MARK: - Advanced Analysis Results
     @Published var cryptoFindings: [AdvancedCryptoDetector.CryptoFinding] = []
     @Published var deobfuscationReport: DeobfuscationReportWrapper?
@@ -161,6 +168,10 @@ class AppState: ObservableObject {
         decompilerOutput = ""
         errorMessage = nil
 
+        // Clear malware state
+        malwareReport = nil
+        isAnalyzingMalware = false
+
         // Clear caches
         symbolsByAddress = [:]
         symbolsByName = [:]
@@ -177,98 +188,134 @@ class AppState: ObservableObject {
         redoStack = []
     }
 
+    private var loadTask: Task<Void, Never>?
+
+    func cancelLoading() {
+        loadTask?.cancel()
+        loadTask = nil
+        isLoading = false
+        loadingMessage = "Cancelled"
+    }
+
     func loadFile(url: URL) async {
+        // Cancel any previous load
+        loadTask?.cancel()
+
         isLoading = true
         loadingProgress = 0
         loadingMessage = "Loading file..."
         errorMessage = nil
 
-        // Capture references for background work
         let loader = binaryLoader
         let strAnalyzer = stringAnalyzer
 
-        do {
-            loadingMessage = "Parsing binary format..."
-            loadingProgress = 0.1
+        let task = Task.detached(priority: .userInitiated) { () -> (BinaryFile, [Symbol], [Symbol], [Symbol], [Function], [UInt64: Symbol], [String: Symbol], [UInt64: Function], [StringReference]) in
+            // Load binary (synchronous, no deadlock)
+            let binary = try loader.load(from: url)
 
-            // Use continuation with explicit GCD for guaranteed background execution
-            let result: (BinaryFile, [Symbol], [Symbol], [Symbol], [Function], [UInt64: Symbol], [String: Symbol], [UInt64: Function], [StringReference]) = try await withCheckedThrowingContinuation { continuation in
-                DispatchQueue.global(qos: .userInitiated).async {
-                    do {
-                        // Load binary on background thread
-                        let binary = try loader.loadSync(from: url)
+            try Task.checkCancellation()
 
-                        // Process symbols
-                        let imports = binary.symbols.filter { $0.isImport }
-                        let exports = binary.symbols.filter { $0.isExport }
-                        let symbols = binary.symbols
+            // Process symbols
+            let imports = binary.symbols.filter { $0.isImport }
+            let exports = binary.symbols.filter { $0.isExport }
+            let symbols = binary.symbols
 
-                        // Get functions from symbols
-                        let functions = binary.symbols
-                            .filter { $0.type == .function && $0.address != 0 }
-                            .map { Function(name: $0.name, startAddress: $0.address, endAddress: $0.address + max($0.size, 4)) }
-                            .sorted { $0.startAddress < $1.startAddress }
+            try Task.checkCancellation()
 
-                        // Build lookup caches
-                        let symbolsByAddress = symbols.reduce(into: [UInt64: Symbol]()) { dict, symbol in
-                            if symbol.address != 0 && dict[symbol.address] == nil {
-                                dict[symbol.address] = symbol
-                            }
-                        }
-                        let symbolsByName = symbols.reduce(into: [String: Symbol]()) { dict, symbol in
-                            if dict[symbol.name] == nil {
-                                dict[symbol.name] = symbol
-                            }
-                        }
-                        let functionsByAddress = functions.reduce(into: [UInt64: Function]()) { dict, func_ in
-                            if dict[func_.startAddress] == nil {
-                                dict[func_.startAddress] = func_
-                            }
-                        }
+            // Get functions from symbols
+            let functions = binary.symbols
+                .filter { $0.type == .function && $0.address != 0 }
+                .map { Function(name: $0.name, startAddress: $0.address, endAddress: $0.address + max($0.size, 4)) }
+                .sorted { $0.startAddress < $1.startAddress }
 
-                        // Extract strings
-                        let strings = strAnalyzer.analyze(binary: binary)
+            try Task.checkCancellation()
 
-                        continuation.resume(returning: (binary, imports, exports, symbols, functions, symbolsByAddress, symbolsByName, functionsByAddress, strings))
-                    } catch {
-                        continuation.resume(throwing: error)
-                    }
+            // Build lookup caches
+            let symbolsByAddress = symbols.reduce(into: [UInt64: Symbol]()) { dict, symbol in
+                if symbol.address != 0 && dict[symbol.address] == nil {
+                    dict[symbol.address] = symbol
+                }
+            }
+            let symbolsByName = symbols.reduce(into: [String: Symbol]()) { dict, symbol in
+                if dict[symbol.name] == nil {
+                    dict[symbol.name] = symbol
+                }
+            }
+            let functionsByAddress = functions.reduce(into: [UInt64: Function]()) { dict, func_ in
+                if dict[func_.startAddress] == nil {
+                    dict[func_.startAddress] = func_
                 }
             }
 
-            // Update UI on main thread
-            loadingMessage = "Finalizing..."
-            loadingProgress = 0.9
+            try Task.checkCancellation()
 
-            let (binary, imports, exports, symbols, functions, symbolsByAddress, symbolsByName, functionsByAddress, strings) = result
+            // Extract strings
+            let strings = strAnalyzer.analyze(binary: binary)
 
-            self.currentFile = binary
-            self.selectedSection = binary.sections.first { $0.containsCode }
-            self.imports = imports
-            self.exports = exports
-            self.symbols = symbols
-            self.functions = functions
-            self.symbolsByAddress = symbolsByAddress
-            self.symbolsByName = symbolsByName
-            self.functionsByAddress = functionsByAddress
-            self.strings = strings
+            return (binary, imports, exports, symbols, functions, symbolsByAddress, symbolsByName, functionsByAddress, strings)
+        }
 
-            // Initialize patcher
-            self.patcher = BinaryPatcher(binary: binary)
-            self.patches = []
-            self.hasUnsavedChanges = false
+        loadTask = Task {
+            do {
+                loadingMessage = "Parsing binary format..."
+                loadingProgress = 0.1
 
-            // Done!
-            loadingProgress = 1.0
-            loadingMessage = "Ready"
-            isLoading = false
+                let result = try await task.value
 
-        } catch {
-            debug("ERROR: \(error)")
-            errorMessage = error.localizedDescription
-            showError = true
-            loadingMessage = "Error: \(error.localizedDescription)"
-            isLoading = false
+                guard !Task.isCancelled else { return }
+
+                loadingMessage = "Finalizing..."
+                loadingProgress = 0.9
+
+                let (binary, imports, exports, symbols, functions, symbolsByAddress, symbolsByName, functionsByAddress, strings) = result
+
+                self.currentFile = binary
+                self.selectedSection = binary.sections.first { $0.containsCode }
+                self.imports = imports
+                self.exports = exports
+                self.symbols = symbols
+                self.functions = functions
+                self.symbolsByAddress = symbolsByAddress
+                self.symbolsByName = symbolsByName
+                self.functionsByAddress = functionsByAddress
+                self.strings = strings
+
+                self.patcher = BinaryPatcher(binary: binary)
+                self.patches = []
+                self.hasUnsavedChanges = false
+
+                loadingProgress = 1.0
+                loadingMessage = "Ready"
+                isLoading = false
+
+            } catch is CancellationError {
+                isLoading = false
+                loadingMessage = "Cancelled"
+            } catch {
+                debug("ERROR: \(error)")
+                errorMessage = error.localizedDescription
+                showError = true
+                loadingMessage = "Error: \(error.localizedDescription)"
+                isLoading = false
+            }
+        }
+
+        await loadTask?.value
+    }
+
+    // MARK: - Malware Analysis
+
+    func analyzeMalware() {
+        guard let binary = currentFile else { return }
+        isAnalyzingMalware = true
+
+        Task.detached(priority: .userInitiated) {
+            let analyzer = MalwareAnalyzer()
+            let report = analyzer.analyze(binary: binary)
+            await MainActor.run { [weak self] in
+                self?.malwareReport = report
+                self?.isAnalyzingMalware = false
+            }
         }
     }
 
@@ -661,13 +708,25 @@ class AppState: ObservableObject {
             return
         }
 
+        decompilerOutput = "// Decompiling..."
+
         Task {
             let instructions = await disassembleFunction(function)
-            decompilerOutput = decompiler.decompile(
-                function: function,
-                instructions: instructions,
-                binary: binary
-            )
+
+            // Run heavy decompilation off the main thread
+            let decomp = self.decompiler
+            let output = await Task.detached(priority: .userInitiated) {
+                return decomp.decompile(
+                    function: function,
+                    instructions: instructions,
+                    binary: binary
+                )
+            }.value
+
+            // Update UI on main thread (automatic via @MainActor)
+            if self.selectedFunction?.startAddress == function.startAddress {
+                self.decompilerOutput = output
+            }
         }
     }
 

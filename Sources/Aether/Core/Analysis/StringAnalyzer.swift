@@ -58,7 +58,8 @@ class StringAnalyzer {
         strings.append(contentsOf: asciiStrings)
 
         // Try UTF-16 strings (for Windows binaries or CFStrings)
-        if section.name.contains("ustring") || section.name.contains("cfstring") {
+        if section.name.contains("ustring") || section.name.contains("cfstring") ||
+           section.name == ".rdata" || section.name == ".data" || section.name == ".rsrc" {
             let utf16Strings = extractUTF16Strings(from: data, baseAddress: section.address)
             strings.append(contentsOf: utf16Strings)
         }

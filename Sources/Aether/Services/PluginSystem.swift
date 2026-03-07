@@ -140,7 +140,7 @@ protocol LoaderPlugin: DisassemblerPlugin {
     func canLoad(data: Data) -> Bool
 
     /// Load the binary file
-    func load(from url: URL, data: Data) async throws -> BinaryFile
+    func load(from url: URL, data: Data) throws -> BinaryFile
 }
 
 // MARK: - Processor Plugin

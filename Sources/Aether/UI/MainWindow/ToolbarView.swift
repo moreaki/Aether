@@ -191,6 +191,55 @@ struct ToolbarView: View {
             Divider()
                 .frame(height: 24)
 
+            // Malware Analysis
+            Menu {
+                Button {
+                    appState.showMalwareDashboard = true
+                    if appState.malwareReport == nil {
+                        appState.analyzeMalware()
+                    }
+                } label: {
+                    Label("Malware Dashboard", systemImage: "shield.lefthalf.filled")
+                }
+
+                Button {
+                    appState.analyzeMalware()
+                    appState.showMalwareDashboard = true
+                } label: {
+                    Label("Run Analysis", systemImage: "play.fill")
+                }
+
+                Divider()
+
+                Button {
+                    appState.showEntropyView = true
+                } label: {
+                    Label("Entropy Analysis", systemImage: "chart.bar")
+                }
+
+                Button {
+                    appState.showImportExportBrowser = true
+                } label: {
+                    Label("Import/Export Browser", systemImage: "arrow.left.arrow.right")
+                }
+            } label: {
+                VStack(spacing: 2) {
+                    Image(systemName: "shield.lefthalf.filled")
+                        .font(.system(size: 16))
+                        .foregroundColor(.red)
+                    Text("Malware")
+                        .font(.caption2)
+                }
+                .frame(minWidth: 50)
+                .padding(.vertical, 4)
+                .padding(.horizontal, 8)
+            }
+            .menuStyle(.borderlessButton)
+            .disabled(appState.currentFile == nil)
+
+            Divider()
+                .frame(height: 24)
+
             // Frida Script Generation
             Menu {
                 Button {

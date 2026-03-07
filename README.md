@@ -5,8 +5,8 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/Pinperepette/Aether/releases/download/v1.2.0/Aether.dmg">
-    <img src="https://img.shields.io/badge/Download-v1.2.0-blue?style=for-the-badge&logo=apple" alt="Download">
+  <a href="https://github.com/Pinperepette/Aether/releases/download/v2.0.0/Aether.dmg">
+    <img src="https://img.shields.io/badge/Download-v2.0.0-blue?style=for-the-badge&logo=apple" alt="Download">
   </a>
   <img src="https://img.shields.io/badge/macOS-14.0+-black?style=for-the-badge&logo=apple" alt="macOS 14.0+">
   <img src="https://img.shields.io/badge/Swift-5.9-orange?style=for-the-badge&logo=swift" alt="Swift 5.9">
@@ -21,13 +21,56 @@
 
 ## Download
 
-**[Download Aether v1.2.0](https://github.com/Pinperepette/Aether/releases/download/v1.2.0/Aether.dmg)** — macOS 14.0 (Sonoma) or later
+**[Download Aether v2.0.0](https://github.com/Pinperepette/Aether/releases/download/v2.0.0/Aether.dmg)** — macOS 14.0 (Sonoma) or later
 
 If the application appears corrupted or macOS displays a message stating the app is damaged, open Terminal and run the following command:
 
   xattr -cr /path/to/Application.app
 
   Replace /path/to/Application.app with the actual path to the application. This command removes extended attributes, including the quarantine flag, that may prevent the app from launching.
+
+## What's New in v2.0.0
+
+### Malware Analysis Dashboard
+- **Threat Scoring**: Automated threat level assessment (Clean/Low/Medium/High/Critical) with 0-100 scoring
+- **Malware Dashboard**: Unified view combining all analysis results in a single panel
+- **Comprehensive Reports**: Detailed findings with severity levels and actionable insights
+
+### Entropy Analysis
+- **Shannon Entropy**: Calculate entropy for the entire binary and individual sections
+- **Section Assessment**: Automatically flag sections as packed, encrypted, or normal
+- **Entropy Heatmap**: Block-level entropy visualization to identify suspicious regions
+
+### Indicators of Compromise (IoC) Extraction
+- **URL Detection**: Extract embedded URLs from binary strings
+- **IP Addresses**: Find hardcoded IPv4 addresses
+- **Domains & Emails**: Identify network indicators
+- **File Paths & Registry Keys**: Detect filesystem and registry artifacts
+- **Crypto Wallets**: Find cryptocurrency wallet addresses
+- **Mutex Names**: Extract synchronization object names
+
+### PE Anomaly Detection
+- **Section Analysis**: Detect suspicious section names (UPX, VMProtect, Themida, etc.)
+- **Entropy Anomalies**: Flag sections with abnormally high entropy
+- **Severity Classification**: Anomalies rated as Low/Medium/High/Critical
+
+### Packer Detection
+- **Signature Matching**: Detect UPX, VMProtect, Themida, ASPack, and more
+- **Section Name Analysis**: Match against known packer section patterns
+- **Import Fingerprinting**: Identify packers by their import patterns
+- **Confidence Scoring**: Each detection includes a confidence level
+
+### Enhanced PE Loader
+- **Import/Export Browser**: Browse PE imports and exports with full detail
+- **Imphash Calculation**: Compute import hash for malware classification
+- **Improved Parsing**: More robust PE format handling
+
+### Import/Export Browser View
+- **Visual Browser**: Navigate PE imports and exports in a dedicated view
+- **DLL Grouping**: Imports organized by source DLL
+- **Export Details**: View exported symbols with ordinals and addresses
+
+---
 
 ## What's New in v1.2.0
 
@@ -53,7 +96,7 @@ Three new AI features that you can use on-demand when analyzing binaries:
 - **Batch Operations**: Select All / Deselect All for quick decisions
 - **Reasoning Provided**: Each suggestion includes why that name was chosen
 
-### How to Use New AI Features
+### How to Use AI Features
 1. Go to **Settings** (gear icon) → **AI** tab
 2. Enter your AI API key
 3. Click the **AI** menu in the toolbar:
@@ -62,138 +105,18 @@ Three new AI features that you can use on-demand when analyzing binaries:
    - **Rename Variables** — Get AI suggestions for variable names
 4. AI features only appear when API key is configured
 
-### UI Improvements
-- **Unified AI Menu**: All AI features consolidated under single "AI" button
-- **Conditional Visibility**: AI options hidden when no API key configured
-- **Better Settings Access**: Fixed Settings button in toolbar
-
 ---
 
 ## What's New in v1.1.7
 
 ### Frida Script Generator
 - **Dynamic Instrumentation**: Generate ready-to-use Frida scripts for iOS and macOS
-- **6 Hook Types**:
-  - **Trace**: Log function calls, arguments, return values, and backtraces
-  - **Bypass**: Modify return values to bypass security checks
-  - **Intercept**: Advanced hooking with argument/return modification and context dump
-  - **Memory Dump**: Hexdump function memory at runtime
-  - **String Patch**: Find and patch strings in memory
-  - **Anti-Debug**: Bypass common anti-debugging (ptrace, sysctl, getppid, task_get_exception_ports)
+- **6 Hook Types**: Trace, Bypass, Intercept, Memory Dump, String Patch, Anti-Debug
 - **Platform Support**: iOS and macOS with platform-specific optimizations
-- **AI-Enhanced Scripts**: Optional AI-powered script generation with intelligent bypass detection
+- **AI-Enhanced Scripts**: Optional AI-powered script generation
 - **Export Options**: Copy to clipboard or save as .js file
-- **Quick Run Guide**: Frida command shown directly in UI
 
-### How to Use Frida Generator
-1. Select a function in the sidebar
-2. Click "Frida" in toolbar (or Analysis → Frida Script)
-3. Choose platform (iOS/macOS) and hook type
-4. Click "Basic" for template or "AI Enhanced" for intelligent analysis
-5. Copy script and run: `frida -U -f <app> -l script.js`
-
-## What's New in v1.1.6
-
-### AI Security Analysis
-- **AI Integration**: Optional AI-powered security analysis
-- **Bypass Detection**: Identifies license checks, trial limitations, and anti-piracy mechanisms
-- **Patch Points**: Suggests specific addresses and techniques for bypassing protections
-- **Security Mechanisms**: Detects code signing, integrity checks, network validation
-- **Hardcoded Secrets**: Finds obfuscated strings, API keys, and encryption keys
-- **Detailed Reports**: Findings with severity levels (Critical/High/Medium/Low/Info)
-- **Secure Storage**: API key stored in macOS Keychain (never in app bundle)
-
-### How to Use AI Analysis
-1. Go to Settings (⌘,) → AI tab
-2. Enter your API key
-3. Click "AI Analysis" in toolbar → Analyze Function or Analyze Binary
-4. Review findings, bypass techniques, and patch points
-
-<p align="center">
-  <img src="img/1.png" alt="Aether - Disassembly View" width="700">
-</p>
-<p align="center">
-  <img src="img/2.png" alt="Aether - Disassembly View" width="700">
-</p>
-
-## What's New in v1.1.5
-
-### Performance & Stability
-- **Async File Loading**: Binary loading now runs on background thread for responsive UI
-- **No More Beach Ball**: Large binaries load without freezing the interface
-- **Removed Debug Logging**: Faster parsing and reduced memory usage
-
-### Java Decompiler
-- **Full Java Bytecode Support**: Decompile JAR files and Java class files
-- **Stack Simulation**: Accurate bytecode interpretation
-- **Method Signatures**: Proper parsing of Java type descriptors
-
-### UI Improvements
-- **Cleaner Toolbar**: Removed redundant function name display
-- **Better Function Names**: Improved formatting for Java method signatures in sidebar
-
-## What's New in v1.1.4
-
-### Enhanced Decompiler
-- **Control Flow Recovery**: Integrated ControlFlowStructurer for proper structure recovery (if/else, while, for loops)
-- **String Literal Detection**: New string cache system for better string recognition in decompiled code
-- **Improved Type Inference**: Better inference for parameters, local variables and return types
-- **Prologue/Epilogue Detection**: Automatically skip boilerplate function setup code
-- **Smart Condition Building**: Combines compare+jump patterns into readable conditions
-- **Better Variable Names**: Improved register to variable name mapping for both x86_64 and ARM64
-- **Enhanced Operations**: Full support for increment, decrement, logic and arithmetic operations
-
-## What's New in v1.1.3
-
-### Conditional Jumps Patcher
-- **New Conditional Jumps View**: View and patch conditional jumps (JZ, JNZ, JE, JNE, etc.)
-- **Flip Jump Conditions**: Easily invert conditional jumps with one click
-- **Support for all x86 conditionals**: Both short (7x) and long (0F 8x) jump opcodes
-- **Search and Filter**: Find specific jumps by address or mnemonic
-
-## What's New in v1.1.2
-
-### Bug Fixes
-- **Fixed crash with -128 displacement**: Int8 overflow bug that caused SIGILL crash when disassembling instructions like `lea rdi, [rbp-0x80]`
-- **Added bounds checking**: Safe array access for register names and condition codes
-- **Improved stability**: Better handling of large binaries and edge cases
-
-## What's New in v1.1.1
-
-### Branch Visualization
-- **Branch Arrows**: Color-coded arrows showing jump directions
-  - 🟢 Green: Conditional forward jumps (skip code)
-  - 🔴 Red: Conditional backward jumps (loops)
-  - 🔵 Blue: Unconditional forward jumps
-  - 🟠 Orange: Unconditional backward jumps
-  - 🟣 Purple: Function calls
-- **Jump Table View**: Panel listing all jumps with filtering and sorting (⇧⌘J)
-- **Inline Target Preview**: Hover over jumps to see target code
-- **Branch Probability**: Estimated probability (Likely/Unlikely/50-50)
-- **Branch Statistics**: Summary of branches in disassembly header
-
-## What's New in v1.1.0
-
-### Advanced Analysis Features
-- **Pseudo-Code Generation**: Convert assembly to structured C-like code with if/else, while, for loops
-- **Call Graph Visualization**: Interactive graph showing function call relationships with multiple layouts (hierarchical, radial, force-directed)
-- **Crypto Detection**: Automatically detect cryptographic algorithms (AES, SHA, RSA, etc.) by signature matching
-- **Deobfuscation Analysis**: Detect obfuscation techniques (control flow flattening, opaque predicates, junk code)
-- **Type Recovery**: Infer data types (structs, arrays, enums) from memory access patterns
-- **Idiom Recognition**: Recognize common code patterns (strlen, memcpy, multiplication via shifts)
-
-### Export Formats
-- **IDA Python Script**: Export analysis to IDA Pro format
-- **Ghidra XML**: Export to Ghidra project format
-- **Radare2 Script**: Export to r2 commands
-- **Binary Ninja Script**: Export to Binary Ninja format
-- **JSON/CSV/HTML/Markdown**: Multiple report formats
-- **C Header**: Generate header files with function signatures
-
-### Other Improvements
-- **Data Flow Analysis**: Def-use chains, reaching definitions, constant propagation
-- **AI Annotator**: Suggest function names and comments based on behavior analysis
-- **Lightweight Emulator**: Trace execution for x86-64
+---
 
 ## Features
 
@@ -221,6 +144,7 @@ Three new AI features that you can use on-demand when analyzing binaries:
 | Generate Pseudo-Code | ⇧⌘P | Generate structured pseudo-code |
 | Call Graph | ⌘K | Show interactive call graph |
 | Frida Script | - | Generate Frida hooking scripts |
+| Malware Analysis | - | Full malware threat assessment |
 | Crypto Detection | - | Detect cryptographic algorithms |
 | Deobfuscation Analysis | - | Analyze obfuscation techniques |
 | Type Recovery | - | Recover data types |
@@ -263,11 +187,18 @@ Three new AI features that you can use on-demand when analyzing binaries:
   <img src="img/3.png" alt="Aether - Analysis View" width="700">
 </p>
 
+<p align="center">
+  <img src="img/1.png" alt="Aether - Disassembly View" width="700">
+</p>
+<p align="center">
+  <img src="img/2.png" alt="Aether - Disassembly View" width="700">
+</p>
+
 ## Installation
 
 ### Download DMG (Recommended)
 
-1. Download [Aether.dmg](https://github.com/Pinperepette/Aether/releases/download/v1.2.0/Aether.dmg)
+1. Download [Aether.dmg](https://github.com/Pinperepette/Aether/releases/download/v2.0.0/Aether.dmg)
 2. Open the DMG and drag Aether to Applications
 3. Launch Aether from Applications
 
@@ -290,7 +221,8 @@ The built application will be available at `.build/release/Aether`.
 5. **Decompile**: Press ⇧⌘D to generate pseudo-C code
 6. **Pseudo-Code**: Press ⇧⌘P to generate structured pseudo-code
 7. **Call Graph**: Press ⌘K to view function call relationships
-8. **Export**: Use the Export menu to save analysis in various formats
+8. **Malware Analysis**: Use Analysis → Malware Analysis for threat assessment
+9. **Export**: Use the Export menu to save analysis in various formats
 
 ### Keyboard Shortcuts
 
@@ -325,14 +257,14 @@ Aether/
 ├── Core/
 │   ├── Binary/    # Binary format loaders (Mach-O, ELF, PE, JAR)
 │   ├── Disassembler/  # Disassembly engine
-│   ├── Analysis/  # Function, string, xref, crypto, type analysis
+│   ├── Analysis/  # Function, string, xref, crypto, malware, entropy analysis
 │   ├── Decompiler/    # Pseudo-code generation
 │   └── Emulation/     # Lightweight CPU emulator
 ├── UI/            # SwiftUI views and components
 │   ├── GraphView/     # CFG and Call Graph visualization
-│   └── AnalysisViews/ # Analysis result views
+│   └── AnalysisViews/ # Analysis result views (including Malware Dashboard)
 ├── Models/        # Data models
-└── Services/      # Export manager, Frida generator, AI client
+└── Services/      # Export manager, Frida generator, AI client, Plugin system
 ```
 
 ## Contributing

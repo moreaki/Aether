@@ -3,35 +3,7 @@ import Foundation
 /// Protocol for binary file loaders
 protocol BinaryLoaderProtocol {
     func canLoad(data: Data) -> Bool
-    func load(from url: URL, data: Data) async throws -> BinaryFile
-    func loadSync(from url: URL, data: Data) throws -> BinaryFile
-}
-
-// Default sync implementation using semaphore (safe when called from background thread)
-extension BinaryLoaderProtocol {
-    func loadSync(from url: URL, data: Data) throws -> BinaryFile {
-        let semaphore = DispatchSemaphore(value: 0)
-        var result: Result<BinaryFile, Error>?
-
-        Task {
-            do {
-                let binary = try await self.load(from: url, data: data)
-                result = .success(binary)
-            } catch {
-                result = .failure(error)
-            }
-            semaphore.signal()
-        }
-
-        semaphore.wait()
-
-        switch result! {
-        case .success(let binary):
-            return binary
-        case .failure(let error):
-            throw error
-        }
-    }
+    func load(from url: URL, data: Data) throws -> BinaryFile
 }
 
 /// Errors that can occur during binary loading
@@ -78,33 +50,8 @@ class BinaryLoader {
         ]
     }
 
-    /// Load a binary file from URL
-    func load(from url: URL) async throws -> BinaryFile {
-        debugLog("load() called for \(url.lastPathComponent)")
-
-        guard FileManager.default.fileExists(atPath: url.path) else {
-            throw BinaryLoaderError.fileNotFound(url)
-        }
-
-        debugLog("Reading file data...")
-        let data = try Data(contentsOf: url)
-        debugLog("File size: \(data.count) bytes")
-
-        // Find appropriate loader
-        for loader in loaders {
-            if loader.canLoad(data: data) {
-                debugLog("Using loader: \(type(of: loader))")
-                let result = try await loader.load(from: url, data: data)
-                debugLog("Loader finished!")
-                return result
-            }
-        }
-
-        throw BinaryLoaderError.unsupportedFormat
-    }
-
-    /// Synchronous load for background thread usage
-    func loadSync(from url: URL) throws -> BinaryFile {
+    /// Load a binary file from URL (synchronous, call from background)
+    func load(from url: URL) throws -> BinaryFile {
         guard FileManager.default.fileExists(atPath: url.path) else {
             throw BinaryLoaderError.fileNotFound(url)
         }
@@ -113,7 +60,7 @@ class BinaryLoader {
 
         for loader in loaders {
             if loader.canLoad(data: data) {
-                return try loader.loadSync(from: url, data: data)
+                return try loader.load(from: url, data: data)
             }
         }
 

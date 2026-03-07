@@ -117,6 +117,18 @@ struct MainView: View {
             AIRenameView()
                 .environmentObject(appState)
         }
+        .sheet(isPresented: $appState.showMalwareDashboard) {
+            MalwareDashboardView()
+                .environmentObject(appState)
+        }
+        .sheet(isPresented: $appState.showImportExportBrowser) {
+            ImportExportBrowserView()
+                .environmentObject(appState)
+        }
+        .sheet(isPresented: $appState.showEntropyView) {
+            EntropyView()
+                .environmentObject(appState)
+        }
         .onDrop(of: [UTType.fileURL], isTargeted: $isTargeted) { providers in
             handleDrop(providers: providers)
         }

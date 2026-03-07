@@ -8,16 +8,20 @@ class Decompiler {
     private var strings: [UInt64: String] = [:]
     private var variableNames: [String: String] = [:]
     private var variableCounter = 0
+    private var cachedBinaryID: UUID?
 
     /// Decompile a function to pseudo-C code
     func decompile(function: Function, instructions: [Instruction], binary: BinaryFile) -> String {
         self.binary = binary
-        self.strings = [:]
         self.variableNames = [:]
         self.variableCounter = 0
 
-        // Build string cache
-        buildStringCache(binary: binary)
+        // Build string cache only once per binary
+        if cachedBinaryID != binary.id {
+            self.strings = [:]
+            buildStringCache(binary: binary)
+            cachedBinaryID = binary.id
+        }
 
         var output = ""
 

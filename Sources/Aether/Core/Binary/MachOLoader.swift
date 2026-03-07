@@ -39,7 +39,7 @@ class MachOLoader: BinaryLoaderProtocol {
                magic == FAT_MAGIC || magic == FAT_CIGAM
     }
 
-    func load(from url: URL, data: Data) async throws -> BinaryFile {
+    func load(from url: URL, data: Data) throws -> BinaryFile {
         debugLog("MachOLoader.load() starting")
         guard let magic = data.readUInt32LE(at: 0) else {
             throw BinaryLoaderError.invalidHeader
@@ -49,16 +49,16 @@ class MachOLoader: BinaryLoaderProtocol {
         // Handle fat/universal binaries
         if magic == FAT_MAGIC || magic == FAT_CIGAM {
             debugLog("Fat binary detected")
-            return try await loadFatBinary(from: url, data: data, swapped: magic == FAT_CIGAM)
+            return try loadFatBinary(from: url, data: data, swapped: magic == FAT_CIGAM)
         }
 
         debugLog("Regular Mach-O")
-        return try await loadMachO(from: url, data: data, offset: 0)
+        return try loadMachO(from: url, data: data, offset: 0)
     }
 
     // MARK: - Fat Binary Loading
 
-    private func loadFatBinary(from url: URL, data: Data, swapped: Bool) async throws -> BinaryFile {
+    private func loadFatBinary(from url: URL, data: Data, swapped: Bool) throws -> BinaryFile {
         debugLog("loadFatBinary starting")
 
         // Fat header is ALWAYS big-endian, regardless of host architecture
@@ -95,12 +95,12 @@ class MachOLoader: BinaryLoaderProtocol {
         }
 
         debugLog("Selected arch: \(String(format: "0x%X", bestArch)) at offset \(bestOffset)")
-        return try await loadMachO(from: url, data: data, offset: Int(bestOffset))
+        return try loadMachO(from: url, data: data, offset: Int(bestOffset))
     }
 
     // MARK: - Mach-O Loading
 
-    private func loadMachO(from url: URL, data: Data, offset: Int) async throws -> BinaryFile {
+    private func loadMachO(from url: URL, data: Data, offset: Int) throws -> BinaryFile {
         debugLog("loadMachO at offset \(offset)")
         guard let magic = data.readUInt32LE(at: offset) else {
             throw BinaryLoaderError.invalidHeader

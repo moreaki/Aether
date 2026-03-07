@@ -173,7 +173,7 @@ class JARLoader: BinaryLoaderProtocol {
         return false
     }
 
-    func load(from url: URL, data: Data) async throws -> BinaryFile {
+    func load(from url: URL, data: Data) throws -> BinaryFile {
         // Determine if it's a JAR or class file
         if data[0] == 0x50 && data[1] == 0x4B {
             return try loadJAR(from: url)

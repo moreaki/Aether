@@ -52,7 +52,7 @@ class ELFLoader: BinaryLoaderProtocol {
                data[3] == ELF_MAGIC[3]
     }
 
-    func load(from url: URL, data: Data) async throws -> BinaryFile {
+    func load(from url: URL, data: Data) throws -> BinaryFile {
         guard data.count >= 52 else {
             throw BinaryLoaderError.invalidHeader
         }

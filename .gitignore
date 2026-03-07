@@ -35,3 +35,11 @@ xcuserdata/
 
 # Debug
 *.dSYM/
+
+# Swift build artifacts
+*.o
+*.d
+*.swiftdeps
+
+# MCP config
+.mcp.json
