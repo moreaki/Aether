@@ -23,6 +23,7 @@ MIN_MACOS_VERSION="${MIN_MACOS_VERSION:-14.0}"
 DMG_VOLUME_NAME="${DMG_VOLUME_NAME:-Aether}"
 APP_ONLY="${APP_ONLY:-0}"
 OPEN_APP="${OPEN_APP:-0}"
+ENABLE_GET_TASK_ALLOW="${ENABLE_GET_TASK_ALLOW:-0}"
 
 usage() {
   cat <<USAGE
@@ -36,6 +37,7 @@ Options:
   --bundle-id <id>          Bundle identifier (default: com.aether.app)
   --app-only                Build/sign app bundle only (no DMG/notarization)
   --open-app                Open resulting app bundle when done
+  --allow-debugging         Sign app with get-task-allow entitlement
   --skip-notarization       Skip notarization/stapling
   -h, --help                Show this help
 
@@ -55,6 +57,7 @@ Optional env vars:
   BUNDLE_ID                 Same as --bundle-id
   MIN_MACOS_VERSION         Defaults to 14.0
   DMG_VOLUME_NAME           Defaults to Aether
+  ENABLE_GET_TASK_ALLOW     Set to 1 to add com.apple.security.get-task-allow
 USAGE
 }
 
@@ -78,6 +81,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     --open-app)
       OPEN_APP=1
+      shift
+      ;;
+    --allow-debugging)
+      ENABLE_GET_TASK_ALLOW=1
       shift
       ;;
     --skip-notarization)
@@ -211,6 +218,12 @@ if [[ "${SKIP_NOTARIZATION}" != "1" && -z "${NOTARY_PROFILE}" ]]; then
   exit 1
 fi
 
+if [[ "${ENABLE_GET_TASK_ALLOW}" == "1" && "${APP_ONLY}" != "1" ]]; then
+  echo "--allow-debugging is supported only with --app-only builds." >&2
+  echo "get-task-allow is intended for local debugging, not notarized distribution." >&2
+  exit 1
+fi
+
 if [[ -z "${APP_VERSION}" ]]; then
   APP_VERSION="$(git -C "${ROOT_DIR}" describe --tags --abbrev=0 2>/dev/null || true)"
   APP_VERSION="${APP_VERSION#v}"
@@ -264,6 +277,7 @@ mkdir -p "${WORK_DIR}" "${DIST_DIR}"
 log "Build metadata: version=${APP_VERSION}, build=${APP_BUILD}, commit=${BUILD_COMMIT}, arch=${TARGET_ARCH}"
 
 APP_DIR="${WORK_DIR}/${APP_NAME}.app"
+ENTITLEMENTS_FILE="${WORK_DIR}/${APP_NAME}.entitlements"
 mkdir -p "${APP_DIR}/Contents/MacOS" "${APP_DIR}/Contents/Resources"
 
 RESOURCE_RELEASE_DIR=""
@@ -375,13 +389,28 @@ log "Writing Info.plist"
   printf '%s\n' '</plist>'
 } > "${APP_DIR}/Contents/Info.plist"
 
-log "Signing app bundle"
-if [[ "${APP_ONLY}" == "1" ]]; then
-  # Local run path: avoid timestamp/runtime requirements that can block on keychain/network.
-  codesign --force --sign "${APP_SIGN_IDENTITY}" "${APP_DIR}"
-else
-  codesign --force --timestamp --options runtime --sign "${APP_SIGN_IDENTITY}" "${APP_DIR}"
+SIGN_ARGS=(--force --sign "${APP_SIGN_IDENTITY}")
+if [[ "${APP_ONLY}" != "1" ]]; then
+  SIGN_ARGS+=(--timestamp --options runtime)
 fi
+
+if [[ "${ENABLE_GET_TASK_ALLOW}" == "1" ]]; then
+  log "Writing entitlements"
+  {
+    printf '%s\n' '<?xml version="1.0" encoding="UTF-8"?>'
+    printf '%s\n' '<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">'
+    printf '%s\n' '<plist version="1.0">'
+    printf '%s\n' '<dict>'
+    printf '%s\n' '  <key>com.apple.security.get-task-allow</key>'
+    printf '%s\n' '  <true/>'
+    printf '%s\n' '</dict>'
+    printf '%s\n' '</plist>'
+  } > "${ENTITLEMENTS_FILE}"
+  SIGN_ARGS+=(--entitlements "${ENTITLEMENTS_FILE}")
+fi
+
+log "Signing app bundle"
+codesign "${SIGN_ARGS[@]}" "${APP_DIR}"
 codesign --verify --deep --strict --verbose=2 "${APP_DIR}"
 
 if [[ "${SKIP_NOTARIZATION}" != "1" ]]; then
