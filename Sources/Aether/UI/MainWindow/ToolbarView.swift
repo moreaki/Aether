@@ -10,7 +10,7 @@ struct ToolbarView: View {
             HStack(spacing: 8) {
                 ToolbarButton(
                     icon: "doc.badge.plus",
-                    label: "Open",
+                    label: translate("toolbar.open"),
                     shortcut: "O"
                 ) {
                     appState.openFile()
@@ -18,7 +18,7 @@ struct ToolbarView: View {
 
                 ToolbarButton(
                     icon: "square.and.arrow.down",
-                    label: "Save",
+                    label: translate("toolbar.save"),
                     shortcut: "S"
                 ) {
                     appState.saveFileAs()
@@ -27,7 +27,7 @@ struct ToolbarView: View {
 
                 ToolbarButton(
                     icon: "arrow.clockwise",
-                    label: "Reload",
+                    label: translate("toolbar.reload"),
                     shortcut: nil
                 ) {
                     if let url = appState.currentFile?.url {
@@ -40,7 +40,7 @@ struct ToolbarView: View {
 
                 ToolbarButton(
                     icon: "xmark.circle",
-                    label: "Close",
+                    label: translate("toolbar.close"),
                     shortcut: "W"
                 ) {
                     appState.closeFile()
@@ -53,7 +53,7 @@ struct ToolbarView: View {
                 Circle()
                     .fill(Color.orange)
                     .frame(width: 8, height: 8)
-                    .help("Unsaved changes")
+                    .help(translate("toolbar.unsavedChanges"))
             }
 
             Divider()
@@ -63,7 +63,7 @@ struct ToolbarView: View {
             HStack(spacing: 8) {
                 ToolbarButton(
                     icon: "cpu",
-                    label: "Analyze",
+                    label: translate("toolbar.analyze"),
                     shortcut: "A"
                 ) {
                     appState.analyzeAll()
@@ -72,7 +72,7 @@ struct ToolbarView: View {
 
                 ToolbarButton(
                     icon: "function",
-                    label: "Functions",
+                    label: translate("toolbar.functions"),
                     shortcut: nil
                 ) {
                     appState.findFunctions()
@@ -87,19 +87,19 @@ struct ToolbarView: View {
             HStack(spacing: 8) {
                 ToolbarToggle(
                     icon: "rectangle.split.2x1",
-                    label: "Decompiler",
+                    label: translate("toolbar.decompiler"),
                     isOn: $appState.showDecompiler
                 )
 
                 ToolbarToggle(
                     icon: "rectangle.bottomhalf.filled",
-                    label: "Hex View",
+                    label: translate("toolbar.hexView"),
                     isOn: $appState.showHexView
                 )
 
                 ToolbarButton(
                     icon: "point.3.connected.trianglepath.dotted",
-                    label: "CFG",
+                    label: translate("toolbar.cfg"),
                     shortcut: "G"
                 ) {
                     appState.showCFG.toggle()
@@ -118,7 +118,7 @@ struct ToolbarView: View {
                         Button {
                             appState.showAIChat = true
                         } label: {
-                            Label("Chat with AI...", systemImage: "bubble.left.and.bubble.right")
+                            Label(translate("toolbar.ai.chat"), systemImage: "bubble.left.and.bubble.right")
                         }
 
                         Divider()
@@ -127,14 +127,14 @@ struct ToolbarView: View {
                         Button {
                             appState.explainCurrentFunction()
                         } label: {
-                            Label("Explain Function", systemImage: "text.bubble")
+                            Label(translate("toolbar.ai.explainFunction"), systemImage: "text.bubble")
                         }
                         .disabled(appState.selectedFunction == nil)
 
                         Button {
                             appState.suggestVariableNames()
                         } label: {
-                            Label("Rename Variables", systemImage: "textformat.abc")
+                            Label(translate("toolbar.ai.renameVariables"), systemImage: "textformat.abc")
                         }
                         .disabled(appState.selectedFunction == nil || appState.decompilerOutput.isEmpty)
 
@@ -144,31 +144,21 @@ struct ToolbarView: View {
                         Button {
                             appState.analyzeWithAI()
                         } label: {
-                            Label("Security Analysis", systemImage: "shield.lefthalf.filled")
+                            Label(translate("toolbar.ai.securityAnalysis"), systemImage: "shield.lefthalf.filled")
                         }
                         .disabled(appState.selectedFunction == nil)
 
                         Button {
                             appState.analyzeBinaryWithAI()
                         } label: {
-                            Label("Analyze Binary", systemImage: "doc.viewfinder")
-                        }
-                        .disabled(appState.currentFile == nil)
-
-                        Divider()
-
-                        // Malware Flow
-                        Button {
-                            appState.showMalwareFlow = true
-                        } label: {
-                            Label("Malware Behavior Flow", systemImage: "arrow.triangle.branch")
+                            Label(translate("toolbar.ai.analyzeBinary"), systemImage: "doc.viewfinder")
                         }
                         .disabled(appState.currentFile == nil)
                     } else {
                         Button {
                             openSettings()
                         } label: {
-                            Label("Set API Key in Settings...", systemImage: "key")
+                            Label(translate("toolbar.ai.configure"), systemImage: "key")
                         }
                     }
                 } label: {
@@ -176,7 +166,7 @@ struct ToolbarView: View {
                         Image(systemName: "brain")
                             .font(.system(size: 16))
                             .foregroundColor(appState.hasAIAPIKey ? .purple : .secondary)
-                        Text("AI")
+                        Text(translate("toolbar.ai"))
                             .font(.caption2)
                     }
                     .frame(minWidth: 40)
@@ -188,7 +178,7 @@ struct ToolbarView: View {
 
             ToolbarButton(
                 icon: "gear",
-                label: "Settings",
+                label: translate("toolbar.settings"),
                 shortcut: ","
             ) {
                 openSettings()
@@ -258,7 +248,7 @@ struct ToolbarView: View {
                 Button {
                     appState.generateFridaScript()
                 } label: {
-                    Label("Generate Basic Script", systemImage: "doc.text")
+                    Label(translate("toolbar.frida.generateBasic"), systemImage: "doc.text")
                 }
                 .disabled(appState.selectedFunction == nil)
 
@@ -266,7 +256,7 @@ struct ToolbarView: View {
                     Button {
                         appState.generateFridaScriptWithAI()
                     } label: {
-                        Label("Generate with AI", systemImage: "brain")
+                        Label(translate("toolbar.frida.generateWithAI"), systemImage: "brain")
                     }
                     .disabled(appState.selectedFunction == nil)
                 }
@@ -274,14 +264,14 @@ struct ToolbarView: View {
                 Button {
                     appState.generateMultiFunctionFridaScript()
                 } label: {
-                    Label("Hook Multiple Functions", systemImage: "list.bullet")
+                    Label(translate("toolbar.frida.hookMultiple"), systemImage: "list.bullet")
                 }
                 .disabled(appState.functions.isEmpty)
 
                 Divider()
 
                 // Platform submenu
-                Menu("Platform") {
+                Menu(translate("toolbar.frida.platform")) {
                     ForEach(FridaPlatform.allCases) { platform in
                         Button {
                             appState.selectedFridaPlatform = platform
@@ -297,7 +287,7 @@ struct ToolbarView: View {
                 }
 
                 // Hook type submenu
-                Menu("Hook Type") {
+                Menu(translate("toolbar.frida.hookType")) {
                     ForEach(FridaHookType.allCases) { type in
                         Button {
                             appState.selectedFridaHookType = type
@@ -316,7 +306,7 @@ struct ToolbarView: View {
                     Image(systemName: "hammer.fill")
                         .font(.system(size: 16))
                         .foregroundColor(.orange)
-                    Text("Frida")
+                    Text(translate("toolbar.frida"))
                         .font(.caption2)
                 }
                 .frame(minWidth: 50)
@@ -333,7 +323,7 @@ struct ToolbarView: View {
                 Image(systemName: "magnifyingglass")
                     .foregroundColor(.secondary)
 
-                Text("Search...")
+                Text(translate("toolbar.search"))
                     .foregroundColor(.secondary)
             }
             .padding(.horizontal, 12)
@@ -347,7 +337,7 @@ struct ToolbarView: View {
             // Quick navigation
             ToolbarButton(
                 icon: "arrow.right.circle",
-                label: "Go to",
+                label: translate("toolbar.goto"),
                 shortcut: "G"
             ) {
                 appState.showGoToAddress = true
@@ -394,7 +384,7 @@ struct ToolbarButton: View {
         .onHover { hovering in
             isHovered = hovering
         }
-        .help(shortcut != nil ? "\(label) (\(shortcut!))" : label)
+        .help(shortcut ?? "")
     }
 }
 
@@ -429,6 +419,6 @@ struct ToolbarToggle: View {
         .onHover { hovering in
             isHovered = hovering
         }
-        .help(label)
+        .help("")
     }
 }
