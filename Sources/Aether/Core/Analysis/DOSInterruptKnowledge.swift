@@ -208,10 +208,18 @@ enum DOSInterruptKnowledge {
         switch service {
         case 0x00:
             return call(0x10, service, "bios_set_video_mode", "bios_set_video_mode(al);")
+        case 0x01:
+            return call(0x10, service, "bios_set_cursor_shape", "bios_set_cursor_shape(\(state.expression(for: "ch")), \(state.expression(for: "cl")));")
         case 0x02:
             return call(0x10, service, "bios_set_cursor_position", "bios_set_cursor_position(\(state.expression(for: "bh")), \(state.expression(for: "dh")), \(state.expression(for: "dl")));")
+        case 0x06:
+            return call(0x10, service, "bios_scroll_up_window", "bios_scroll_up_window(\(state.expression(for: "al")), \(state.expression(for: "bh")), \(state.expression(for: "cx")), \(state.expression(for: "dx")));")
+        case 0x09:
+            return call(0x10, service, "bios_write_char_attr", "bios_write_char_attr(\(state.expression(for: "al")), \(state.expression(for: "bh")), \(state.expression(for: "bl")), \(state.expression(for: "cx")));")
         case 0x0E:
             return call(0x10, service, "bios_teletype_output", "bios_teletype_output(\(state.expression(for: "al")));")
+        case 0x0F:
+            return call(0x10, service, "bios_get_video_state", "bios_get_video_state();")
         default:
             return DOSInterruptCall(
                 interruptVector: 0x10,
