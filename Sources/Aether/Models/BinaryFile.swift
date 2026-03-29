@@ -137,6 +137,26 @@ struct Section: Identifiable, Hashable {
     let flags: UInt32
     let data: Data
 
+    init(
+        name: String,
+        segmentName: String,
+        address: UInt64,
+        size: UInt64,
+        offset: UInt32,
+        alignment: UInt32,
+        flags: UInt32,
+        data: Data
+    ) {
+        self.name = name
+        self.segmentName = segmentName
+        self.address = address
+        self.size = size
+        self.offset = offset
+        self.alignment = alignment
+        self.flags = flags
+        self.data = Data(data)
+    }
+
     var fullName: String { "\(segmentName),\(name)" }
 
     var isExecutable: Bool {

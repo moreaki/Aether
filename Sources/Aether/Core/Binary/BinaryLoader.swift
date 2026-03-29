@@ -168,6 +168,6 @@ extension Data {
 
     func subdata(offset: Int, count: Int) -> Data? {
         guard offset >= 0, offset + count <= self.count else { return nil }
-        return self[startIndex + offset ..< startIndex + offset + count]
+        return Data(self[startIndex + offset ..< startIndex + offset + count])
     }
 }
