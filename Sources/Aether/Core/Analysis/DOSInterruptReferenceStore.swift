@@ -46,6 +46,17 @@ enum DOSInterruptReferenceStore {
         entriesByName[name]?.summary
     }
 
+    static func summary(vector: UInt8, service: UInt16?, fallbackName: String? = nil) -> String? {
+        if let direct = entry(vector: vector, service: service, fallbackName: fallbackName) {
+            return direct.summary
+        }
+        return RBILInterruptReferenceStore.summary(vector: vector, service: service)
+    }
+
+    static func detail(vector: UInt8, service: UInt16?) -> String? {
+        RBILInterruptReferenceStore.detail(vector: vector, service: service)
+    }
+
     static func detail(forHelperName name: String) -> String? {
         guard let entry = entriesByName[name] else {
             return nil

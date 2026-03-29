@@ -4,6 +4,7 @@ Build/
 DerivedData/
 *.app
 dist
+input
 
 # Swift Package Manager
 .swiftpm/
