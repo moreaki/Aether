@@ -165,6 +165,7 @@ enum BinaryFormat: String, CaseIterable, Identifiable, Codable {
     case machO = "Mach-O"
     case elf = "ELF"
     case pe = "PE"
+    case dos = "DOS MZ"
     case java = "Java"
     case unknown = "Unknown"
 
@@ -179,6 +180,8 @@ enum BinaryFormat: String, CaseIterable, Identifiable, Codable {
             return ["", "so", "o"]
         case .pe:
             return ["exe", "dll", "sys"]
+        case .dos:
+            return ["exe"]
         case .java:
             return ["jar", "class", "war", "ear"]
         case .unknown:
@@ -211,11 +214,27 @@ enum BinaryFormat: String, CaseIterable, Identifiable, Codable {
         case 0x464C457F:  // ELF magic (0x7F 'E' 'L' 'F')
             return .elf
         default:
-            // Check for PE (MZ header)
+            // Check for MZ-family executables
             if data.count >= 2 {
                 let mz = data.prefix(2)
                 if mz[mz.startIndex] == 0x4D && mz[mz.startIndex + 1] == 0x5A {
-                    return .pe
+                    let candidateOffsets = [
+                        data.readUInt32LE(at: 0x3C),
+                        data.readUInt32BE(at: 0x3C)
+                    ].compactMap { $0 }
+
+                    for candidate in candidateOffsets {
+                        guard candidate < UInt32(data.count),
+                              Int(candidate) + 4 <= data.count else {
+                            continue
+                        }
+
+                        if data.readUInt32LE(at: Int(candidate)) == 0x00004550 {
+                            return .pe
+                        }
+                    }
+
+                    return .dos
                 }
             }
             // Check for JAR/ZIP (PK header)

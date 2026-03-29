@@ -53,9 +53,7 @@ class PELoader: BinaryLoaderProtocol {
     // MARK: - Protocol Implementation
 
     func canLoad(data: Data) -> Bool {
-        guard data.count >= 2 else { return false }
-        guard let magic = data.readUInt16LE(at: 0) else { return false }
-        return magic == MZ_MAGIC
+        resolvePEHeaderOffset(in: data) != nil
     }
 
     func load(from url: URL, data: Data) throws -> BinaryFile {

@@ -49,7 +49,8 @@ final class BinaryLoader: @unchecked Sendable {
             JARLoader(),  // Check JAR/class first (CAFEBABE conflicts with fat binary)
             MachOLoader(),
             ELFLoader(),
-            PELoader()
+            PELoader(),
+            DOSLoader()
         ]
     }
 
