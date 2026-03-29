@@ -38,11 +38,13 @@ class FunctionAnalyzer {
                 address: section.address,
                 architecture: binary.architecture
             )
+            let instructionAddresses = Set(instructions.map(\.address))
 
             // Find call targets
             for insn in instructions {
                 if insn.type == .call, let target = insn.branchTarget {
                     if !functionAddresses.contains(target) &&
+                       instructionAddresses.contains(target) &&
                        section.contains(address: target) {
                         functionAddresses.insert(target)
                         functions.append(Function(
@@ -77,15 +79,17 @@ class FunctionAnalyzer {
 
         // 5. Calculate function end addresses
         for i in 0..<functions.count {
+            var tentativeEnd = functions[i].endAddress
             if i + 1 < functions.count {
                 // End at next function start
-                functions[i].endAddress = functions[i + 1].startAddress
+                tentativeEnd = functions[i + 1].startAddress
             } else {
                 // Last function - find the section end
                 if let section = binary.sections.first(where: { $0.contains(address: functions[i].startAddress) }) {
-                    functions[i].endAddress = section.address + section.size
+                    tentativeEnd = section.address + section.size
                 }
             }
+            functions[i].endAddress = tentativeEnd
 
             // Refine end address by finding return instructions
             if let section = binary.sections.first(where: { $0.contains(address: functions[i].startAddress) }) {
@@ -96,7 +100,9 @@ class FunctionAnalyzer {
                     binary: binary
                 )
                 if refinedEnd > functions[i].startAddress {
-                    functions[i].endAddress = min(functions[i].endAddress, refinedEnd)
+                    let sectionEnd = section.address + section.size
+                    let clampedRefinedEnd = min(refinedEnd, sectionEnd)
+                    functions[i].endAddress = max(tentativeEnd, clampedRefinedEnd)
                 }
             }
         }
@@ -241,7 +247,8 @@ class FunctionAnalyzer {
         disassembler: DisassemblerEngine,
         binary: BinaryFile
     ) async -> UInt64 {
-        let maxSize = min(function.endAddress - function.startAddress, 0x10000)
+        let scanWindow = max(function.endAddress - function.startAddress, 0x400)
+        let maxSize = min(scanWindow, 0x10000)
         let offset = Int(function.startAddress - section.address)
 
         guard offset >= 0 && offset < section.data.count else {
@@ -313,6 +320,7 @@ class FunctionAnalyzer {
             address: function.startAddress,
             architecture: binary.architecture
         )
+        let dosInterrupts = DOSInterruptKnowledge.analyze(instructions: instructions, binary: binary)
 
         guard !instructions.isEmpty else {
             return []
@@ -328,7 +336,7 @@ class FunctionAnalyzer {
                 leaders.insert(target)
             }
             // Instruction after a branch is a leader
-            if insn.endsBasicBlock {
+            if insn.endsBasicBlock || isTerminalInstruction(insn, dosInterrupts: dosInterrupts) {
                 let nextAddr = insn.address + UInt64(insn.size)
                 if function.contains(address: nextAddr) {
                     leaders.insert(nextAddr)
@@ -382,6 +390,8 @@ class FunctionAnalyzer {
                     if let target = lastInsn.branchTarget, function.contains(address: target) {
                         block.successors.append(target)
                     }
+                case .interrupt where isTerminalInstruction(lastInsn, dosInterrupts: dosInterrupts):
+                    block.type = .exit
                 default:
                     // Fall through to next block
                     if i + 1 < sortedLeaders.count {

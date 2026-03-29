@@ -207,7 +207,7 @@ enum DOSInterruptKnowledge {
 
         switch service {
         case 0x00:
-            return call(0x10, service, "bios_set_video_mode", "bios_set_video_mode(\(state.expression(for: "al")));")
+            return call(0x10, service, "bios_set_video_mode", "bios_set_video_mode(al);")
         case 0x02:
             return call(0x10, service, "bios_set_cursor_position", "bios_set_cursor_position(\(state.expression(for: "bh")), \(state.expression(for: "dh")), \(state.expression(for: "dl")));")
         case 0x0E:

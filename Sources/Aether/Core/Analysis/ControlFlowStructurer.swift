@@ -78,7 +78,7 @@ class ControlFlowStructurer {
                 leftOperand: leftOperand,
                 comparison: negateComparison(comparison),
                 rightOperand: rightOperand,
-                isNegated: !isNegated
+                isNegated: isNegated
             )
         }
 
@@ -306,7 +306,7 @@ class ControlFlowStructurer {
 
         // Check if this is a loop header
         if loopHeaders.contains(entry) {
-            return structureLoop(header: block, visited: newVisited)
+            return structureLoop(header: block, exits: exits, visited: newVisited)
         }
 
         // Check block type
@@ -425,7 +425,7 @@ class ControlFlowStructurer {
         return .sequence([structureBlock(block), ifElseStruct])
     }
 
-    private func structureLoop(header: BasicBlock, visited: Set<UInt64>) -> ControlStructure {
+    private func structureLoop(header: BasicBlock, exits: Set<UInt64>, visited: Set<UInt64>) -> ControlStructure {
         // Find the back edge for this loop
         guard let backEdge = backEdges.first(where: { $0.to == header.startAddress }) else {
             return structureBlock(header)
@@ -461,7 +461,7 @@ class ControlFlowStructurer {
             if let exit = exitTarget {
                 var newVisited = visited
                 newVisited.formUnion(loopBlocks)
-                let continuation = structureRegion(entry: exit, exits: [], visited: newVisited)
+                let continuation = structureRegion(entry: exit, exits: exits, visited: newVisited)
                 return .sequence([whileStruct, continuation])
             }
 
@@ -490,7 +490,7 @@ class ControlFlowStructurer {
             if let exit = exitTarget {
                 var newVisited = visited
                 newVisited.formUnion(loopBlocks)
-                let continuation = structureRegion(entry: exit, exits: [], visited: newVisited)
+                let continuation = structureRegion(entry: exit, exits: exits, visited: newVisited)
                 return .sequence([doWhileStruct, continuation])
             }
 
@@ -541,7 +541,7 @@ class ControlFlowStructurer {
             if let exit = exitTarget {
                 var newVisited = visited
                 newVisited.formUnion(loopBlocks)
-                let continuation = structureRegion(entry: exit, exits: [], visited: newVisited)
+                let continuation = structureRegion(entry: exit, exits: exits, visited: newVisited)
                 return .sequence([forStruct, continuation])
             }
 

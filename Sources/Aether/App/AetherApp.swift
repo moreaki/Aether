@@ -1,10 +1,17 @@
 import SwiftUI
+import Darwin
 
 @main
 struct AetherApp: App {
     @StateObject private var appState = AppState()
     @NSApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
     @AppStorage("appLanguage") private var appLanguage = AppLanguage.systemCode
+
+    init() {
+        if let exitCode = AetherCLI.runIfRequested() {
+            Darwin.exit(exitCode)
+        }
+    }
 
     var body: some Scene {
         WindowGroup {
