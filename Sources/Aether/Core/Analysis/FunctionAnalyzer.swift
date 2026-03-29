@@ -7,6 +7,7 @@ class FunctionAnalyzer {
     func analyze(binary: BinaryFile, disassembler: DisassemblerEngine) async -> [Function] {
         var functions: [Function] = []
         var functionAddresses = Set<UInt64>()
+        let minimumFunctionSize = UInt64(max(binary.architecture.pointerSize, 1))
 
         // 1. Get functions from symbols
         for symbol in binary.symbols where symbol.type == .function && symbol.address != 0 {
@@ -15,7 +16,7 @@ class FunctionAnalyzer {
                 functions.append(Function(
                     name: symbol.name,
                     startAddress: symbol.address,
-                    endAddress: symbol.address + max(symbol.size, 4)
+                    endAddress: symbol.address + max(symbol.size, minimumFunctionSize)
                 ))
             }
         }
@@ -26,7 +27,7 @@ class FunctionAnalyzer {
             functions.append(Function(
                 name: "_start",
                 startAddress: binary.entryPoint,
-                endAddress: binary.entryPoint + 4
+                endAddress: binary.entryPoint + minimumFunctionSize
             ))
         }
 
@@ -47,7 +48,7 @@ class FunctionAnalyzer {
                         functions.append(Function(
                             name: "",
                             startAddress: target,
-                            endAddress: target + 4
+                            endAddress: target + minimumFunctionSize
                         ))
                     }
                 }
@@ -65,7 +66,7 @@ class FunctionAnalyzer {
                     functions.append(Function(
                         name: "",
                         startAddress: addr,
-                        endAddress: addr + 4
+                        endAddress: addr + minimumFunctionSize
                     ))
                 }
             }
@@ -92,7 +93,7 @@ class FunctionAnalyzer {
                     function: functions[i],
                     section: section,
                     disassembler: disassembler,
-                    architecture: binary.architecture
+                    binary: binary
                 )
                 if refinedEnd > functions[i].startAddress {
                     functions[i].endAddress = min(functions[i].endAddress, refinedEnd)
@@ -111,6 +112,8 @@ class FunctionAnalyzer {
             // Determine if function is a leaf (doesn't call other functions)
             functions[i].isLeaf = !functions[i].basicBlocks.flatMap(\.instructions).contains { $0.type == .call }
         }
+
+        assignAutoNames(to: &functions, binary: binary)
 
         return functions
     }
@@ -136,6 +139,22 @@ class FunctionAnalyzer {
                 // Also look for: sub rsp, imm (without push rbp)
                 if insn.mnemonic == "sub" && insn.operands.hasPrefix("rsp") {
                     // Check if previous instruction is not part of another function
+                    if i == 0 || instructions[i - 1].type == .return {
+                        prologues.append(insn.address)
+                    }
+                }
+            }
+
+        case .x86_16:
+            for i in 0..<instructions.count - 1 {
+                let insn = instructions[i]
+                if insn.mnemonic == "push" && insn.operands == "bp" {
+                    let next = instructions[i + 1]
+                    if next.mnemonic == "mov" && next.operands.contains("bp, sp") {
+                        prologues.append(insn.address)
+                    }
+                }
+                if insn.mnemonic == "sub" && insn.operands.hasPrefix("sp") {
                     if i == 0 || instructions[i - 1].type == .return {
                         prologues.append(insn.address)
                     }
@@ -182,13 +201,45 @@ class FunctionAnalyzer {
         return prologues
     }
 
+    private func assignAutoNames(to functions: inout [Function], binary: BinaryFile) {
+        var usedNames = Set(functions.compactMap { $0.name.isEmpty ? nil : $0.name })
+
+        for index in functions.indices where functions[index].name.isEmpty {
+            let assignedName: String
+
+            if functions[index].startAddress == binary.entryPoint {
+                assignedName = "start"
+            } else if let wrapperName = DOSInterruptKnowledge.wrapperName(
+                for: functions[index].basicBlocks.flatMap(\.instructions),
+                binary: binary
+            ) {
+                assignedName = uniqueName(wrapperName, address: functions[index].startAddress, usedNames: &usedNames)
+            } else if binary.format == .dos || binary.architecture == .x86_16 {
+                assignedName = String(format: "proc_%04llX", functions[index].startAddress)
+            } else {
+                assignedName = String(format: "sub_%llX", functions[index].startAddress)
+            }
+
+            functions[index].name = assignedName
+            usedNames.insert(assignedName)
+        }
+    }
+
+    private func uniqueName(_ baseName: String, address: UInt64, usedNames: inout Set<String>) -> String {
+        guard usedNames.contains(baseName) else {
+            return baseName
+        }
+
+        return "\(baseName)_\(String(format: "%04llX", address))"
+    }
+
     // MARK: - Function End Detection
 
     private func findFunctionEnd(
         function: Function,
         section: Section,
         disassembler: DisassemblerEngine,
-        architecture: Architecture
+        binary: BinaryFile
     ) async -> UInt64 {
         let maxSize = min(function.endAddress - function.startAddress, 0x10000)
         let offset = Int(function.startAddress - section.address)
@@ -203,24 +254,38 @@ class FunctionAnalyzer {
         let instructions = await disassembler.disassemble(
             data: Data(data),
             address: function.startAddress,
-            architecture: architecture
+            architecture: binary.architecture
         )
 
-        // Find the last return instruction
-        var lastReturn: UInt64 = function.startAddress
+        guard !instructions.isEmpty else {
+            return function.endAddress
+        }
 
+        let reachable = reachableInstructions(
+            from: function.startAddress,
+            within: instructions,
+            function: function,
+            binary: binary
+        )
+        if let maxReachable = reachable
+            .map({ $0.address + UInt64($0.size) })
+            .max(),
+           maxReachable > function.startAddress {
+            return maxReachable
+        }
+
+        // Fallback to the legacy "last return" heuristic if control-flow reachability failed.
+        var lastReturn: UInt64 = function.startAddress
         for insn in instructions {
             if insn.type == .return {
                 lastReturn = insn.address + UInt64(insn.size)
             }
-            // Stop at unconditional jump to outside the function (tail call)
             if insn.type == .jump, let target = insn.branchTarget {
                 if target < function.startAddress || target >= function.endAddress {
                     return insn.address + UInt64(insn.size)
                 }
             }
         }
-
         return lastReturn > function.startAddress ? lastReturn : function.endAddress
     }
 
@@ -347,5 +412,74 @@ class FunctionAnalyzer {
         }
 
         return blocks
+    }
+
+    private func reachableInstructions(
+        from entryAddress: UInt64,
+        within instructions: [Instruction],
+        function: Function,
+        binary: BinaryFile
+    ) -> [Instruction] {
+        let sortedInstructions = instructions.sorted { $0.address < $1.address }
+        let instructionsByAddress = Dictionary(uniqueKeysWithValues: sortedInstructions.map { ($0.address, $0) })
+        let nextAddressByInstruction = Dictionary(uniqueKeysWithValues: zip(sortedInstructions, sortedInstructions.dropFirst()).map {
+            ($0.0.address, $0.1.address)
+        })
+        let dosInterrupts = DOSInterruptKnowledge.analyze(instructions: sortedInstructions, binary: binary)
+
+        var reachableAddresses = Set<UInt64>()
+        var worklist: [UInt64] = [entryAddress]
+
+        while let address = worklist.popLast() {
+            guard !reachableAddresses.contains(address),
+                  let instruction = instructionsByAddress[address],
+                  function.contains(address: address) else {
+                continue
+            }
+
+            reachableAddresses.insert(address)
+
+            if isTerminalInstruction(instruction, dosInterrupts: dosInterrupts) {
+                continue
+            }
+
+            if let nextAddress = nextAddressByInstruction[address], function.contains(address: nextAddress) {
+                switch instruction.type {
+                case .jump:
+                    break
+                default:
+                    worklist.append(nextAddress)
+                }
+            }
+
+            switch instruction.type {
+            case .conditionalJump, .jump:
+                if let target = instruction.branchTarget, function.contains(address: target) {
+                    worklist.append(target)
+                }
+            default:
+                break
+            }
+        }
+
+        return sortedInstructions.filter { reachableAddresses.contains($0.address) }
+    }
+
+    private func isTerminalInstruction(
+        _ instruction: Instruction,
+        dosInterrupts: [UInt64: DOSInterruptCall]
+    ) -> Bool {
+        if instruction.type == .return {
+            return true
+        }
+        if instruction.type == .jump, let target = instruction.branchTarget, target < instruction.address {
+            return false
+        }
+        if instruction.type == .interrupt,
+           let interrupt = dosInterrupts[instruction.address],
+           interrupt.name == "dos_exit" || interrupt.name == "dos_terminate" {
+            return true
+        }
+        return false
     }
 }

@@ -622,6 +622,20 @@ class ControlFlowStructurer {
                 leftOp = mapRegisterToVariable(parts[0])
                 rightOp = parts[1]
             }
+        } else if let jumpInsn {
+            switch jumpInsn.mnemonic.lowercased() {
+            case "loop", "loope", "loopz", "loopne", "loopnz":
+                leftOp = loopCounterRegister(for: block)
+                rightOp = "0"
+            case "jcxz":
+                leftOp = "cx"
+                rightOp = "0"
+            case "jecxz":
+                leftOp = "ecx"
+                rightOp = "0"
+            default:
+                break
+            }
         }
 
         // Map jump condition to comparison
@@ -671,8 +685,18 @@ class ControlFlowStructurer {
     }
 
     private func mapRegisterToVariable(_ reg: String) -> String {
+        let normalized = reg.lowercased()
+        let dosRegisters: Set<String> = [
+            "ax", "bx", "cx", "dx", "si", "di", "bp", "sp",
+            "al", "ah", "bl", "bh", "cl", "ch", "dl", "dh",
+            "cs", "ds", "es", "ss"
+        ]
+        if dosRegisters.contains(normalized) {
+            return normalized
+        }
+
         let regMap: [String: String] = [
-            "rax": "result", "eax": "result",
+            "rax": "result", "eax": "result", "ax": "result",
             "rdi": "arg1", "edi": "arg1", "x0": "arg1", "w0": "arg1",
             "rsi": "arg2", "esi": "arg2", "x1": "arg2", "w1": "arg2",
             "rdx": "arg3", "edx": "arg3", "x2": "arg3", "w2": "arg3",
@@ -680,7 +704,18 @@ class ControlFlowStructurer {
             "r8": "arg5", "r8d": "arg5", "x4": "arg5", "w4": "arg5",
             "r9": "arg6", "r9d": "arg6", "x5": "arg6", "w5": "arg6",
         ]
-        return regMap[reg.lowercased()] ?? reg
+        return regMap[normalized] ?? reg
+    }
+
+    private func loopCounterRegister(for block: BasicBlock) -> String {
+        switch block.instructions.first?.architecture {
+        case .some(.x86_64):
+            return "rcx"
+        case .some(.i386):
+            return "ecx"
+        default:
+            return "cx"
+        }
     }
 }
 
@@ -862,7 +897,11 @@ class StructuredCodePrinter {
                 if let sym = binary?.symbols.first(where: { $0.address == target }) {
                     funcName = sym.displayName
                 } else {
-                    funcName = String(format: "sub_%llX", target)
+                    if binary?.format == .dos || binary?.architecture == .x86_16 {
+                        funcName = String(format: "proc_%04llX", target)
+                    } else {
+                        funcName = String(format: "sub_%llX", target)
+                    }
                 }
             }
             return "\(funcName)();"
@@ -892,7 +931,7 @@ class StructuredCodePrinter {
 
     private func mapRegister(_ reg: String) -> String {
         let regMap: [String: String] = [
-            "rax": "result", "eax": "result",
+            "rax": "result", "eax": "result", "ax": "result",
             "rdi": "arg1", "edi": "arg1", "x0": "arg1", "w0": "arg1",
             "rsi": "arg2", "esi": "arg2", "x1": "arg2", "w1": "arg2",
             "rdx": "arg3", "edx": "arg3", "x2": "arg3", "w2": "arg3",

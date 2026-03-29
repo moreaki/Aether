@@ -6,6 +6,7 @@ class Decompiler {
     private let structurer = ControlFlowStructurer()
     private var binary: BinaryFile?
     private var strings: [UInt64: String] = [:]
+    private var dosInterruptCalls: [UInt64: DOSInterruptCall] = [:]
     private var variableNames: [String: String] = [:]
     private var variableCounter = 0
     private var cachedBinaryID: UUID?
@@ -22,6 +23,7 @@ class Decompiler {
             buildStringCache(binary: binary)
             cachedBinaryID = binary.id
         }
+        dosInterruptCalls = DOSInterruptKnowledge.analyze(instructions: instructions, binary: binary)
 
         var output = ""
 
@@ -52,7 +54,7 @@ class Decompiler {
         // Use ControlFlowStructurer for proper structure recovery
         if !function.basicBlocks.isEmpty && function.basicBlocks.count > 1 {
             let structure = structurer.structure(function: function)
-            let printer = EnhancedCodePrinter(binary: binary, strings: strings)
+            let printer = EnhancedCodePrinter(binary: binary, strings: strings, dosInterruptCalls: dosInterruptCalls)
             output += printer.print(structure)
         } else {
             // Fallback to linear decompilation for simple functions
@@ -121,14 +123,14 @@ class Decompiler {
                 if insn.operands.contains("byte") || insn.operands.contains("BYTE") {
                     return "char"
                 }
-                return "int64_t"
+                return defaultIntegerType(for: architecture)
             }
 
             // XOR with self = return 0
             if insn.mnemonic == "xor" {
                 let parts = insn.operands.split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces).lowercased() }
                 if parts.count == 2 && parts[0] == parts[1] && parts[0] == returnReg.lowercased() {
-                    return "int"
+                    return defaultIntegerType(for: architecture)
                 }
             }
         }
@@ -152,19 +154,73 @@ class Decompiler {
             }
         }
 
+        if argRegs.isEmpty {
+            return inferStackParameters(instructions: instructions, architecture: architecture)
+        }
+
         for (i, reg) in argRegs.enumerated() {
             if let type = usedArgs[reg] {
                 let paramName = "arg\(i + 1)"
                 params.append("\(type) \(paramName)")
             } else if usedArgs.keys.contains(where: { argRegs.firstIndex(of: $0) ?? 0 > i }) {
                 // There's a higher numbered arg used, so this one must exist too
-                params.append("int64_t arg\(i + 1)")
+                params.append("\(defaultIntegerType(for: architecture)) arg\(i + 1)")
             } else {
                 break
             }
         }
 
         return params
+    }
+
+    private func inferStackParameters(instructions: [Instruction], architecture: Architecture) -> [String] {
+        let frameRegister: String
+        let firstArgumentOffset: Int
+
+        switch architecture {
+        case .x86_16:
+            frameRegister = "bp"
+            firstArgumentOffset = 4
+        case .i386:
+            frameRegister = "ebp"
+            firstArgumentOffset = 8
+        default:
+            return []
+        }
+
+        var offsets: [Int: String] = [:]
+        let pattern = "\\[\(frameRegister) \\+ (0x[0-9a-fA-F]+|\\d+)\\]"
+
+        for insn in instructions {
+            let operands = insn.operands.lowercased()
+            guard let match = operands.range(of: pattern, options: .regularExpression) else {
+                continue
+            }
+
+            let matchString = String(operands[match])
+            guard let valueRange = matchString.range(of: "0x[0-9a-fA-F]+|\\d+", options: .regularExpression) else {
+                continue
+            }
+
+            let valueString = String(matchString[valueRange])
+            let offset: Int
+            if valueString.hasPrefix("0x") {
+                offset = Int(valueString.dropFirst(2), radix: 16) ?? 0
+            } else {
+                offset = Int(valueString) ?? 0
+            }
+
+            guard offset >= firstArgumentOffset else {
+                continue
+            }
+
+            offsets[offset] = inferLocalType(insn: insn)
+        }
+
+        let sortedOffsets = offsets.keys.sorted()
+        return sortedOffsets.enumerated().map { index, offset in
+            "\(offsets[offset] ?? defaultIntegerType(for: architecture)) arg\(index + 1)"
+        }
     }
 
     private func inferOperandType(insn: Instruction, operand: String) -> String {
@@ -182,10 +238,10 @@ class Decompiler {
 
         // Memory operations suggest pointers
         if insn.operands.contains("[") {
-            return "void*"
+            return defaultPointerType()
         }
 
-        return "int64_t"
+        return defaultIntegerType(for: binary?.architecture ?? .unknown)
     }
 
     private func inferLocalVariables(instructions: [Instruction], architecture: Architecture) -> [DecompilerLocalVar] {
@@ -233,7 +289,7 @@ class Decompiler {
                                 name: varName,
                                 type: varType,
                                 stackOffset: stackOffset,
-                                size: 8,
+                                size: architecture.pointerSize,
                                 comment: comment
                             ))
                         }
@@ -260,10 +316,10 @@ class Decompiler {
             }
         }
         if mnem == "lea" {
-            return "void*"
+            return defaultPointerType()
         }
 
-        return "int64_t"
+        return defaultIntegerType(for: binary?.architecture ?? .unknown)
     }
 
     // MARK: - Instruction Decompilation
@@ -286,7 +342,7 @@ class Decompiler {
             if insn.type == .compare && i + 1 < instructions.count {
                 let nextInsn = instructions[i + 1]
                 if nextInsn.type == .conditionalJump {
-                    let condition = buildCondition(cmp: insn, jump: nextInsn)
+                    let condition = buildCondition(cmp: insn, jump: nextInsn, binary: binary)
                     let targetLabel = nextInsn.branchTarget.map { String(format: "loc_%llX", $0) } ?? "unknown"
                     output += "\(ind)if (\(condition)) goto \(targetLabel);\n"
                     i += 2
@@ -310,12 +366,12 @@ class Decompiler {
         let ops = insn.operands.lowercased()
 
         // Common prologue patterns
-        if mnem == "push" && (ops == "rbp" || ops == "ebp") { return true }
-        if mnem == "mov" && (ops.contains("rbp, rsp") || ops.contains("ebp, esp")) { return true }
-        if mnem == "sub" && (ops.contains("rsp,") || ops.contains("esp,")) { return true }
+        if mnem == "push" && (ops == "rbp" || ops == "ebp" || ops == "bp") { return true }
+        if mnem == "mov" && (ops.contains("rbp, rsp") || ops.contains("ebp, esp") || ops.contains("bp, sp")) { return true }
+        if mnem == "sub" && (ops.contains("rsp,") || ops.contains("esp,") || ops.contains("sp,")) { return true }
 
         // Common epilogue patterns
-        if mnem == "pop" && (ops == "rbp" || ops == "ebp") { return true }
+        if mnem == "pop" && (ops == "rbp" || ops == "ebp" || ops == "bp") { return true }
         if mnem == "leave" { return true }
 
         // ARM64 patterns
@@ -325,12 +381,12 @@ class Decompiler {
         return false
     }
 
-    private func buildCondition(cmp: Instruction, jump: Instruction) -> String {
+    private func buildCondition(cmp: Instruction, jump: Instruction, binary: BinaryFile) -> String {
         let parts = cmp.operands.split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) }
         guard parts.count >= 2 else { return "condition" }
 
-        let left = registerToVariable(parts[0])
-        let right = operandToExpression(parts[1])
+        let left = expression(for: inferredMemoryOperand(parts[0], using: parts[1]), binary: binary)
+        let right = expression(for: inferredMemoryOperand(parts[1], using: parts[0]), binary: binary)
 
         let op: String
         switch jump.mnemonic.lowercased() {
@@ -369,16 +425,20 @@ class Decompiler {
         case .store:
             return decompileStore(insn, binary: binary)
         case .push, .pop:
-            return ""  // Usually part of prologue/epilogue
+            return decompileOther(insn, binary: binary)
         case .jump:
             if let target = insn.branchTarget {
                 return String(format: "goto loc_%llX;", target)
             }
             return "// \(insn.text)"
         case .conditionalJump:
-            return "// \(insn.text)"  // Should be handled with compare
+            return decompileConditionalJump(insn)
+        case .interrupt:
+            return decompileInterrupt(insn)
         case .nop:
             return ""
+        case .other:
+            return decompileOther(insn, binary: binary)
         default:
             return "// \(insn.text)"
         }
@@ -393,7 +453,7 @@ class Decompiler {
             if let symbol = binary.symbols.first(where: { $0.address == target }) {
                 funcName = symbol.displayName
             } else {
-                funcName = String(format: "sub_%llX", target)
+                funcName = autogeneratedFunctionName(at: target, architecture: binary.architecture, format: binary.format)
             }
 
             // Check for string arguments (common in printf, puts, etc.)
@@ -408,12 +468,7 @@ class Decompiler {
             funcName = "(*\(registerToVariable(insn.operands)))"
         }
 
-        if args.isEmpty {
-            // Generic arguments based on calling convention
-            args = "/* args */"
-        }
-
-        return "\(funcName)(\(args));"
+        return args.isEmpty ? "\(funcName)();" : "\(funcName)(\(args));"
     }
 
     private func findStringArgument(near address: UInt64, binary: BinaryFile) -> String? {
@@ -443,15 +498,69 @@ class Decompiler {
         return "return result;"
     }
 
+    private func decompileInterrupt(_ insn: Instruction) -> String {
+        dosInterruptCalls[insn.address]?.statement ?? "// \(insn.text)"
+    }
+
+    private func decompileConditionalJump(_ insn: Instruction) -> String {
+        guard let target = insn.branchTarget else {
+            return "// \(insn.text)"
+        }
+
+        let targetLabel = String(format: "loc_%llX", target)
+        switch insn.mnemonic.lowercased() {
+        case "loop":
+            return "if (--\(loopCounterRegister()) != 0) goto \(targetLabel);"
+        case "loope", "loopz":
+            return "if (--\(loopCounterRegister()) != 0 && zero_flag) goto \(targetLabel);"
+        case "loopne", "loopnz":
+            return "if (--\(loopCounterRegister()) != 0 && !zero_flag) goto \(targetLabel);"
+        case "jcxz":
+            return "if (cx == 0) goto \(targetLabel);"
+        case "jecxz":
+            return "if (ecx == 0) goto \(targetLabel);"
+        default:
+            return "// \(insn.text)"
+        }
+    }
+
+    private func defaultIntegerType(for architecture: Architecture) -> String {
+        switch architecture.pointerSize {
+        case 1:
+            return "int8_t"
+        case 2:
+            return "int16_t"
+        case 4:
+            return "int32_t"
+        case 8:
+            return "int64_t"
+        default:
+            return "int"
+        }
+    }
+
+    private func defaultPointerType() -> String {
+        "void*"
+    }
+
+    private func autogeneratedFunctionName(at address: UInt64, architecture: Architecture, format: BinaryFormat) -> String {
+        if format == .dos || architecture == .x86_16 {
+            return String(format: "proc_%04llX", address)
+        }
+        return String(format: "sub_%llX", address)
+    }
+
     private func decompileMove(_ insn: Instruction, binary: BinaryFile) -> String {
         let parts = insn.operands.split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) }
         guard parts.count == 2 else { return "// \(insn.text)" }
 
-        let dest = registerToVariable(parts[0])
-        var src = operandToExpression(parts[1])
+        let destinationOperand = inferredMemoryOperand(parts[0], using: parts[1])
+        let sourceOperand = parts[1]
+        let dest = expression(for: destinationOperand, binary: binary)
+        var src = expression(for: sourceOperand, binary: binary)
 
         // Check if source is a string address
-        if let addr = parseAddress(parts[1]) {
+        if let addr = parseAddress(sourceOperand) {
             if let str = strings[addr] {
                 src = "\"\(escapeString(str.prefix(40).description))\""
             } else if let symbol = binary.symbols.first(where: { $0.address == addr }) {
@@ -476,19 +585,19 @@ class Decompiler {
         case "div", "idiv": op = "/"
         case "inc":
             if parts.count >= 1 {
-                let dest = registerToVariable(parts[0])
+                let dest = expression(for: parts[0], binary: binary!)
                 return "\(dest)++;"
             }
             return "// \(insn.text)"
         case "dec":
             if parts.count >= 1 {
-                let dest = registerToVariable(parts[0])
+                let dest = expression(for: parts[0], binary: binary!)
                 return "\(dest)--;"
             }
             return "// \(insn.text)"
         case "neg":
             if parts.count >= 1 {
-                let dest = registerToVariable(parts[0])
+                let dest = expression(for: parts[0], binary: binary!)
                 return "\(dest) = -\(dest);"
             }
             return "// \(insn.text)"
@@ -496,13 +605,13 @@ class Decompiler {
         }
 
         if parts.count == 2 {
-            let dest = registerToVariable(parts[0])
-            let src = operandToExpression(parts[1])
+            let dest = expression(for: inferredMemoryOperand(parts[0], using: parts[1]), binary: binary!)
+            let src = expression(for: inferredMemoryOperand(parts[1], using: parts[0]), binary: binary!)
             return "\(dest) \(op)= \(src);"
         } else if parts.count == 3 {
-            let dest = registerToVariable(parts[0])
-            let src1 = operandToExpression(parts[1])
-            let src2 = operandToExpression(parts[2])
+            let dest = expression(for: inferredMemoryOperand(parts[0], using: parts[1]), binary: binary!)
+            let src1 = expression(for: inferredMemoryOperand(parts[1], using: parts[0]), binary: binary!)
+            let src2 = expression(for: inferredMemoryOperand(parts[2], using: parts[0]), binary: binary!)
             return "\(dest) = \(src1) \(op) \(src2);"
         }
 
@@ -519,13 +628,13 @@ class Decompiler {
         case "xor":
             // XOR with self is zero
             if parts.count == 2 && parts[0].lowercased() == parts[1].lowercased() {
-                let dest = registerToVariable(parts[0])
+                let dest = expression(for: parts[0], binary: binary!)
                 return "\(dest) = 0;"
             }
             op = "^"
         case "not":
             if parts.count >= 1 {
-                let dest = registerToVariable(parts[0])
+                let dest = expression(for: parts[0], binary: binary!)
                 return "\(dest) = ~\(dest);"
             }
             return "// \(insn.text)"
@@ -536,13 +645,13 @@ class Decompiler {
         }
 
         if parts.count == 2 {
-            let dest = registerToVariable(parts[0])
-            let src = operandToExpression(parts[1])
+            let dest = expression(for: inferredMemoryOperand(parts[0], using: parts[1]), binary: binary!)
+            let src = expression(for: inferredMemoryOperand(parts[1], using: parts[0]), binary: binary!)
             return "\(dest) \(op)= \(src);"
         } else if parts.count == 3 {
-            let dest = registerToVariable(parts[0])
-            let src1 = operandToExpression(parts[1])
-            let src2 = operandToExpression(parts[2])
+            let dest = expression(for: inferredMemoryOperand(parts[0], using: parts[1]), binary: binary!)
+            let src1 = expression(for: inferredMemoryOperand(parts[1], using: parts[0]), binary: binary!)
+            let src2 = expression(for: inferredMemoryOperand(parts[2], using: parts[0]), binary: binary!)
             return "\(dest) = \(src1) \(op) \(src2);"
         }
 
@@ -553,8 +662,8 @@ class Decompiler {
         let parts = insn.operands.split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) }
         guard parts.count >= 2 else { return "// \(insn.text)" }
 
-        let dest = registerToVariable(parts[0])
-        let src = memoryToExpression(parts[1], binary: binary)
+        let dest = expression(for: parts[0], binary: binary)
+        let src = memoryToExpression(inferredMemoryOperand(parts[1], using: parts[0]), binary: binary)
 
         // LEA is address calculation, not load
         if insn.mnemonic.lowercased() == "lea" {
@@ -577,16 +686,76 @@ class Decompiler {
         let parts = insn.operands.split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) }
         guard parts.count >= 2 else { return "// \(insn.text)" }
 
-        let dest = memoryToExpression(parts[0], binary: binary)
-        let src = operandToExpression(parts[1])
+        let dest = memoryToExpression(inferredMemoryOperand(parts[0], using: parts[1]), binary: binary)
+        let src = expression(for: parts[1], binary: binary)
 
         return "\(dest) = \(src);"
+    }
+
+    private func decompileOther(_ insn: Instruction, binary: BinaryFile) -> String {
+        let parts = insn.operands.split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) }
+        let mnemonic = insn.mnemonic.lowercased()
+
+        switch mnemonic {
+        case "cld":
+            return "clear_direction_flag();"
+        case "std":
+            return "set_direction_flag();"
+        case "cli":
+            return "disable_interrupts();"
+        case "sti":
+            return "enable_interrupts();"
+        case "push":
+            guard let value = parts.first else { return "// \(insn.text)" }
+            return "push(\(expression(for: value, binary: binary)));"
+        case "pop":
+            guard let value = parts.first else { return "// \(insn.text)" }
+            return "\(expression(for: value, binary: binary)) = pop();"
+        case "in":
+            guard parts.count >= 2 else { return "// \(insn.text)" }
+            return "\(expression(for: parts[0], binary: binary)) = port_in\(bitWidth(for: parts[0]))(\(expression(for: parts[1], binary: binary)));"
+        case "out":
+            guard parts.count >= 2 else { return "// \(insn.text)" }
+            return "port_out\(bitWidth(for: parts[1]))(\(expression(for: parts[0], binary: binary)), \(expression(for: parts[1], binary: binary)));"
+        case "lodsb", "lodsw", "lodsd", "lodsq":
+            let accumulator = accumulatorRegister(for: mnemonic)
+            return "\(accumulator) = load_\(stringUnitName(for: mnemonic))(ds, si);"
+        case "stosb", "stosw", "stosd", "stosq":
+            let accumulator = accumulatorRegister(for: mnemonic)
+            return "store_\(stringUnitName(for: mnemonic))(es, di, \(accumulator));"
+        case "movsb", "movsw", "movsd", "movsq":
+            return "copy_\(stringUnitName(for: mnemonic))(es, di, ds, si);"
+        case "cmpsb", "cmpsw", "cmpsd", "cmpsq":
+            return "compare_\(stringUnitName(for: mnemonic))(ds, si, es, di);"
+        case "scasb", "scasw", "scasd", "scasq":
+            return "scan_\(stringUnitName(for: mnemonic))(es, di, \(accumulatorRegister(for: mnemonic)));"
+        case "insb", "insw", "insd":
+            return "port_stream_in\(bitWidth(for: accumulatorRegister(for: mnemonic)))(dx, es, di);"
+        case "outsb", "outsw", "outsd":
+            return "port_stream_out\(bitWidth(for: accumulatorRegister(for: mnemonic)))(dx, ds, si);"
+        case "rep", "repe", "repz", "repne", "repnz":
+            guard let operand = parts.first else { return "// \(insn.text)" }
+            return decompileRepeatedStringInstruction(prefix: mnemonic, operand: operand)
+        default:
+            return "// \(insn.text)"
+        }
     }
 
     // MARK: - Expression Conversion
 
     private func registerToVariable(_ reg: String) -> String {
         let r = reg.trimmingCharacters(in: .whitespaces).lowercased()
+
+        if isDOSLikeBinary {
+            let passthroughRegisters: Set<String> = [
+                "ax", "bx", "cx", "dx", "si", "di", "bp", "sp",
+                "al", "ah", "bl", "bh", "cl", "ch", "dl", "dh",
+                "cs", "ds", "es", "ss", "ip", "flags"
+            ]
+            if passthroughRegisters.contains(r) {
+                return r
+            }
+        }
 
         let regMap: [String: String] = [
             // x86_64
@@ -649,13 +818,17 @@ class Decompiler {
         return registerToVariable(op)
     }
 
-    private func memoryToExpression(_ operand: String, binary: BinaryFile) -> String {
-        var op = operand.trimmingCharacters(in: .whitespaces)
-
-        // Remove brackets
-        if op.hasPrefix("[") && op.hasSuffix("]") {
-            op = String(op.dropFirst().dropLast())
+    private func expression(for operand: String, binary: BinaryFile) -> String {
+        let normalized = operand.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        if normalized.contains("[") || normalized.contains(" ptr ") || normalized.contains(":") {
+            return memoryToExpression(operand, binary: binary)
         }
+        return operandToExpression(operand)
+    }
+
+    private func memoryToExpression(_ operand: String, binary: BinaryFile) -> String {
+        let (sizeQualifier, segmentOverride, innerOperand) = normalizeMemoryOperand(operand)
+        let op = innerOperand
 
         // Parse address from operand
         if let addr = parseAddress(op) {
@@ -667,10 +840,18 @@ class Decompiler {
             if let symbol = binary.symbols.first(where: { $0.address == addr }) {
                 return symbol.displayName
             }
+
+            return namedDirectMemoryReference(
+                sizeQualifier: sizeQualifier,
+                segment: segmentOverride ?? "ds",
+                address: addr
+            )
         }
 
         // Stack variable pattern: rbp - 0x10
-        if op.lowercased().contains("rbp") || op.lowercased().contains("ebp") || op.lowercased().contains("x29") {
+        if op.lowercased().contains("rbp") || op.lowercased().contains("ebp") ||
+            op.lowercased().contains("bp") || op.lowercased().contains("sp") ||
+            op.lowercased().contains("x29") {
             if let match = op.range(of: "- ?(0x[0-9a-fA-F]+|\\d+)", options: .regularExpression) {
                 let offsetStr = String(op[match]).replacingOccurrences(of: "- ", with: "").replacingOccurrences(of: "-", with: "")
                 let offset: Int
@@ -701,7 +882,194 @@ class Decompiler {
             return registerToVariable(p)
         }.joined(separator: " ")
 
-        return "*(\(mapped))"
+        if let segmentOverride {
+            return typedMemoryReference(
+                sizeQualifier: sizeQualifier,
+                segment: segmentOverride,
+                offset: mapped
+            )
+        }
+
+        return sizeQualifier == nil ? "*(\(mapped))" : typedMemoryReference(sizeQualifier: sizeQualifier, segment: nil, offset: mapped)
+    }
+
+    private func normalizeMemoryOperand(_ operand: String) -> (sizeQualifier: String?, segmentOverride: String?, inner: String) {
+        var op = operand.trimmingCharacters(in: .whitespacesAndNewlines)
+        let lowercase = op.lowercased()
+
+        let qualifiers = ["byte ptr ", "word ptr ", "dword ptr ", "qword ptr "]
+        var sizeQualifier: String?
+
+        for qualifier in qualifiers where lowercase.hasPrefix(qualifier) {
+            sizeQualifier = String(qualifier.dropLast(5)).trimmingCharacters(in: .whitespaces)
+            op = String(op.dropFirst(qualifier.count)).trimmingCharacters(in: .whitespacesAndNewlines)
+            break
+        }
+
+        var segmentOverride: String?
+        if let bracketIndex = op.firstIndex(of: "[") {
+            let prefix = op[..<bracketIndex].trimmingCharacters(in: .whitespacesAndNewlines)
+            if prefix.hasSuffix(":") {
+                segmentOverride = String(prefix.dropLast()).lowercased()
+            }
+        }
+
+        if let open = op.firstIndex(of: "["), let close = op.lastIndex(of: "]"), open < close {
+            op = String(op[op.index(after: open)..<close])
+        }
+
+        return (sizeQualifier, segmentOverride, op)
+    }
+
+    private func typedMemoryReference(sizeQualifier: String?, segment: String?, offset: String) -> String {
+        let pointer: String
+        switch sizeQualifier?.lowercased() {
+        case "byte":
+            pointer = "uint8_t"
+        case "word":
+            pointer = "uint16_t"
+        case "dword":
+            pointer = "uint32_t"
+        case "qword":
+            pointer = "uint64_t"
+        default:
+            pointer = "uint16_t"
+        }
+
+        if let segment {
+            return "*((\(pointer)*)MK_FP(\(segment), \(offset)))"
+        }
+
+        return "*((\(pointer)*)\(offset))"
+    }
+
+    private var isDOSLikeBinary: Bool {
+        binary?.format == .dos || binary?.architecture == .x86_16
+    }
+
+    private func namedDirectMemoryReference(sizeQualifier: String?, segment: String, address: UInt64) -> String {
+        let normalizedSegment = segment.lowercased()
+        let addressString = address < 0x10000 ? String(format: "%04llX", address) : String(format: "%llX", address)
+        let prefix: String
+
+        if normalizedSegment != "ds" {
+            prefix = normalizedSegment
+        } else if let sizeQualifier {
+            prefix = sizeQualifier.lowercased()
+        } else {
+            prefix = "global"
+        }
+
+        return "\(prefix)_\(addressString)"
+    }
+
+    private func inferredMemoryOperand(_ operand: String, using counterpart: String) -> String {
+        let normalized = operand.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard normalized.contains("["),
+              !normalized.contains(" ptr "),
+              let sizeQualifier = operandSizeQualifier(for: counterpart) else {
+            return operand
+        }
+        return "\(sizeQualifier) ptr \(operand)"
+    }
+
+    private func operandSizeQualifier(for operand: String) -> String? {
+        let normalized = operand.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        if normalized.contains("byte ptr") { return "byte" }
+        if normalized.contains("word ptr") { return "word" }
+        if normalized.contains("dword ptr") { return "dword" }
+        if normalized.contains("qword ptr") { return "qword" }
+
+        switch normalized {
+        case "al", "ah", "bl", "bh", "cl", "ch", "dl", "dh":
+            return "byte"
+        case "ax", "bx", "cx", "dx", "si", "di", "bp", "sp", "cs", "ds", "es", "ss", "ip", "flags":
+            return "word"
+        case "eax", "ebx", "ecx", "edx", "esi", "edi", "ebp", "esp":
+            return "dword"
+        case "rax", "rbx", "rcx", "rdx", "rsi", "rdi", "rbp", "rsp":
+            return "qword"
+        default:
+            return nil
+        }
+    }
+
+    private func loopCounterRegister() -> String {
+        if binary?.architecture == .i386 {
+            return "ecx"
+        }
+        if binary?.architecture == .x86_64 {
+            return "rcx"
+        }
+        return "cx"
+    }
+
+    private func bitWidth(for operand: String) -> Int {
+        switch operandSizeQualifier(for: operand) {
+        case "byte":
+            return 8
+        case "word":
+            return 16
+        case "dword":
+            return 32
+        case "qword":
+            return 64
+        default:
+            return (binary?.architecture.pointerSize ?? 2) * 8
+        }
+    }
+
+    private func accumulatorRegister(for mnemonic: String) -> String {
+        switch mnemonic.suffix(1).lowercased() {
+        case "b":
+            return isDOSLikeBinary ? "al" : "result"
+        case "w":
+            return isDOSLikeBinary ? "ax" : "result"
+        case "d":
+            return binary?.architecture == .i386 ? "eax" : "result"
+        case "q":
+            return binary?.architecture == .x86_64 ? "rax" : "result"
+        default:
+            return isDOSLikeBinary ? "ax" : "result"
+        }
+    }
+
+    private func stringUnitName(for mnemonic: String) -> String {
+        switch mnemonic.suffix(1).lowercased() {
+        case "b":
+            return "byte"
+        case "w":
+            return "word"
+        case "d":
+            return "dword"
+        case "q":
+            return "qword"
+        default:
+            return "item"
+        }
+    }
+
+    private func decompileRepeatedStringInstruction(prefix: String, operand: String) -> String {
+        let normalized = operand.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+
+        switch normalized {
+        case "stosb", "stosw", "stosd", "stosq":
+            return "fill_\(stringUnitName(for: normalized))(es, di, \(accumulatorRegister(for: normalized)), \(loopCounterRegister()));"
+        case "movsb", "movsw", "movsd", "movsq":
+            return "copy_\(stringUnitName(for: normalized))s(es, di, ds, si, \(loopCounterRegister()));"
+        case "cmpsb", "cmpsw", "cmpsd", "cmpsq":
+            return "compare_\(stringUnitName(for: normalized))s(ds, si, es, di, \(loopCounterRegister()));"
+        case "scasb", "scasw", "scasd", "scasq":
+            return "scan_\(stringUnitName(for: normalized))s(es, di, \(accumulatorRegister(for: normalized)), \(loopCounterRegister()));"
+        case "lodsb", "lodsw", "lodsd", "lodsq":
+            return "\(accumulatorRegister(for: normalized)) = load_\(stringUnitName(for: normalized))_sequence(ds, si, \(loopCounterRegister()));"
+        case "insb", "insw", "insd":
+            return "port_stream_in\(bitWidth(for: accumulatorRegister(for: normalized)))(dx, es, di, \(loopCounterRegister()));"
+        case "outsb", "outsw", "outsd":
+            return "port_stream_out\(bitWidth(for: accumulatorRegister(for: normalized)))(dx, ds, si, \(loopCounterRegister()));"
+        default:
+            return "// \(prefix) \(operand)"
+        }
     }
 
     private func parseAddress(_ str: String) -> UInt64? {
@@ -752,11 +1120,13 @@ struct DecompilerLocalVar {
 class EnhancedCodePrinter {
     private let binary: BinaryFile?
     private let strings: [UInt64: String]
+    private let dosInterruptCalls: [UInt64: DOSInterruptCall]
     private var indentLevel = 1
 
-    init(binary: BinaryFile?, strings: [UInt64: String]) {
+    init(binary: BinaryFile?, strings: [UInt64: String], dosInterruptCalls: [UInt64: DOSInterruptCall]) {
         self.binary = binary
         self.strings = strings
+        self.dosInterruptCalls = dosInterruptCalls
     }
 
     func print(_ structure: ControlFlowStructurer.ControlStructure) -> String {
@@ -791,7 +1161,7 @@ class EnhancedCodePrinter {
         case .whileLoop(let condition, let body):
             var result = indent() + "while (\(formatCondition(condition))) {\n"
             indentLevel += 1
-            result += printStructure(body)
+            result += renderLoopBody(body)
             indentLevel -= 1
             result += "\n" + indent() + "}"
             return result
@@ -799,7 +1169,7 @@ class EnhancedCodePrinter {
         case .doWhileLoop(let body, let condition):
             var result = indent() + "do {\n"
             indentLevel += 1
-            result += printStructure(body)
+            result += renderLoopBody(body)
             indentLevel -= 1
             result += "\n" + indent() + "} while (\(formatCondition(condition)));"
             return result
@@ -893,8 +1263,8 @@ class EnhancedCodePrinter {
         switch insn.type {
         case .move:
             guard parts.count >= 2 else { return "" }
-            let dest = mapOperand(parts[0])
-            let src = mapOperand(parts[1])
+            let dest = renderOperand(parts[0])
+            let src = renderOperand(parts[1])
             if dest == src { return "" }
             return "\(dest) = \(src);"
 
@@ -908,11 +1278,11 @@ class EnhancedCodePrinter {
             return decompileCall(insn)
 
         case .return:
-            return "return result;"
+            return "return;"
 
         case .load:
             guard parts.count >= 2 else { return "" }
-            let dest = mapOperand(parts[0])
+            let dest = renderOperand(parts[0])
             let src = mapMemory(parts[1])
             if insn.mnemonic.lowercased() == "lea" {
                 return "\(dest) = &\(src.replacingOccurrences(of: "*", with: ""));"
@@ -922,14 +1292,20 @@ class EnhancedCodePrinter {
         case .store:
             guard parts.count >= 2 else { return "" }
             let dest = mapMemory(parts[0])
-            let src = mapOperand(parts[1])
+            let src = renderOperand(parts[1])
             return "\(dest) = \(src);"
 
         case .compare:
             return ""
 
+        case .interrupt:
+            return dosInterruptCalls[insn.address]?.statement ?? "// \(insn.text)"
+
+        case .push, .pop, .other:
+            return decompileOther(insn, parts: parts)
+
         default:
-            return ""
+            return "// \(insn.text)"
         }
     }
 
@@ -939,13 +1315,13 @@ class EnhancedCodePrinter {
         switch mnem {
         case "inc":
             guard parts.count >= 1 else { return "" }
-            return "\(mapOperand(parts[0]))++;"
+            return "\(renderOperand(parts[0]))++;"
         case "dec":
             guard parts.count >= 1 else { return "" }
-            return "\(mapOperand(parts[0]))--;"
+            return "\(renderOperand(parts[0]))--;"
         case "neg":
             guard parts.count >= 1 else { return "" }
-            let v = mapOperand(parts[0])
+            let v = renderOperand(parts[0])
             return "\(v) = -\(v);"
         default:
             break
@@ -961,13 +1337,13 @@ class EnhancedCodePrinter {
         }
 
         if parts.count == 2 {
-            let dest = mapOperand(parts[0])
-            let src = mapOperand(parts[1])
+            let dest = renderOperand(parts[0])
+            let src = renderOperand(parts[1])
             return "\(dest) \(op)= \(src);"
         } else if parts.count >= 3 {
-            let dest = mapOperand(parts[0])
-            let src1 = mapOperand(parts[1])
-            let src2 = mapOperand(parts[2])
+            let dest = renderOperand(parts[0])
+            let src1 = renderOperand(parts[1])
+            let src2 = renderOperand(parts[2])
             return "\(dest) = \(src1) \(op) \(src2);"
         }
 
@@ -979,7 +1355,7 @@ class EnhancedCodePrinter {
 
         // XOR with self = zero
         if mnem == "xor" && parts.count == 2 && parts[0].lowercased() == parts[1].lowercased() {
-            return "\(mapOperand(parts[0])) = 0;"
+            return "\(renderOperand(parts[0])) = 0;"
         }
 
         let op: String
@@ -989,7 +1365,7 @@ class EnhancedCodePrinter {
         case "xor": op = "^"
         case "not":
             guard parts.count >= 1 else { return "" }
-            let v = mapOperand(parts[0])
+            let v = renderOperand(parts[0])
             return "\(v) = ~\(v);"
         case "shl", "sal": op = "<<"
         case "shr", "sar": op = ">>"
@@ -997,13 +1373,13 @@ class EnhancedCodePrinter {
         }
 
         if parts.count == 2 {
-            let dest = mapOperand(parts[0])
-            let src = mapOperand(parts[1])
+            let dest = renderOperand(parts[0])
+            let src = renderOperand(parts[1])
             return "\(dest) \(op)= \(src);"
         } else if parts.count >= 3 {
-            let dest = mapOperand(parts[0])
-            let src1 = mapOperand(parts[1])
-            let src2 = mapOperand(parts[2])
+            let dest = renderOperand(parts[0])
+            let src1 = renderOperand(parts[1])
+            let src2 = renderOperand(parts[2])
             return "\(dest) = \(src1) \(op) \(src2);"
         }
 
@@ -1017,16 +1393,25 @@ class EnhancedCodePrinter {
             if let sym = binary?.symbols.first(where: { $0.address == target }) {
                 funcName = sym.displayName
             } else {
-                funcName = String(format: "sub_%llX", target)
+                let architecture = binary?.architecture ?? .unknown
+                let format = binary?.format ?? .unknown
+                funcName = autogeneratedFunctionName(at: target, architecture: architecture, format: format)
             }
         }
 
         return "\(funcName)();"
     }
 
+    private func autogeneratedFunctionName(at address: UInt64, architecture: Architecture, format: BinaryFormat) -> String {
+        if format == .dos || architecture == .x86_16 {
+            return String(format: "proc_%04llX", address)
+        }
+        return String(format: "sub_%llX", address)
+    }
+
     private func formatCondition(_ condition: ControlFlowStructurer.Condition) -> String {
-        let left = mapOperand(condition.leftOperand)
-        let right = mapOperand(condition.rightOperand)
+        let left = renderOperand(condition.leftOperand)
+        let right = renderOperand(condition.rightOperand)
 
         var cmpOp = condition.comparison.rawValue
         // Remove unsigned markers for readability
@@ -1055,21 +1440,96 @@ class EnhancedCodePrinter {
         return regMap[o.lowercased()] ?? o
     }
 
+    private func renderOperand(_ operand: String) -> String {
+        let normalized = operand.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        if normalized.contains("[") || normalized.contains(" ptr ") || normalized.contains(":") {
+            return mapMemory(operand)
+        }
+        return mapOperand(operand)
+    }
+
     private func mapMemory(_ op: String) -> String {
-        var o = op
-        if o.hasPrefix("[") && o.hasSuffix("]") {
-            o = String(o.dropFirst().dropLast())
+        let (sizeQualifier, segmentOverride, inner) = normalizeMemoryOperand(op)
+        let o = inner
+
+        if let addr = parseAddress(o) {
+            if let str = strings[addr] {
+                return "\"\(escapeString(str.prefix(32).description))\""
+            }
+            if let symbol = binary?.symbols.first(where: { $0.address == addr }) {
+                return symbol.displayName
+            }
+            return namedDirectMemory(sizeQualifier: sizeQualifier, segment: segmentOverride, address: addr)
         }
 
         // Stack variable
-        if o.lowercased().contains("rbp") || o.lowercased().contains("x29") {
+        if o.lowercased().contains("rbp") || o.lowercased().contains("ebp") ||
+            o.lowercased().contains("bp") || o.lowercased().contains("x29") {
             if let match = o.range(of: "- ?(0x[0-9a-fA-F]+|\\d+)", options: .regularExpression) {
                 let offsetStr = String(o[match]).filter { $0.isHexDigit || $0 == "x" }
                 return "var_\(offsetStr.uppercased())"
             }
+            if let match = o.range(of: "\\+ ?(0x[0-9a-fA-F]+|\\d+)", options: .regularExpression) {
+                let offsetStr = String(o[match]).filter { $0.isHexDigit || $0 == "x" }
+                return "arg_\(offsetStr.uppercased())"
+            }
         }
 
-        return "*(\(mapOperand(o)))"
+        if let segmentOverride {
+            return typedMemoryReference(sizeQualifier: sizeQualifier, segment: segmentOverride, offset: mapOperand(o))
+        }
+
+        return sizeQualifier == nil ? "*(\(mapOperand(o)))" : typedMemoryReference(sizeQualifier: sizeQualifier, segment: nil, offset: mapOperand(o))
+    }
+
+    private func decompileOther(_ insn: Instruction, parts: [String]) -> String {
+        let mnemonic = insn.mnemonic.lowercased()
+
+        switch mnemonic {
+        case "push":
+            guard let value = parts.first else { return "// \(insn.text)" }
+            return "push(\(renderOperand(value)));"
+        case "pop":
+            guard let destination = parts.first else { return "// \(insn.text)" }
+            return "\(renderOperand(destination)) = pop();"
+        case "cld":
+            return "clear_direction_flag();"
+        case "std":
+            return "set_direction_flag();"
+        case "cli":
+            return "disable_interrupts();"
+        case "sti":
+            return "enable_interrupts();"
+        case "in":
+            guard parts.count >= 2 else { return "// \(insn.text)" }
+            let destination = renderOperand(parts[0])
+            let port = renderOperand(parts[1])
+            return "\(destination) = port_in\(bitWidth(for: parts[0]))(\(port));"
+        case "out":
+            guard parts.count >= 2 else { return "// \(insn.text)" }
+            let port = renderOperand(parts[0])
+            let value = renderOperand(parts[1])
+            return "port_out\(bitWidth(for: parts[1]))(\(port), \(value));"
+        case "insb", "insw", "insd":
+            return streamPortInputCall(mnemonic: mnemonic, repeated: false)
+        case "outsb", "outsw", "outsd":
+            return streamPortOutputCall(mnemonic: mnemonic, repeated: false)
+        case "movsb", "movsw", "movsd", "movsq":
+            return stringMoveCall(mnemonic: mnemonic, repeated: false)
+        case "stosb", "stosw", "stosd", "stosq":
+            return stringStoreCall(mnemonic: mnemonic, repeated: false)
+        case "lodsb", "lodsw", "lodsd", "lodsq":
+            return stringLoadCall(mnemonic: mnemonic, repeated: false)
+        case "scasb", "scasw", "scasd", "scasq":
+            return stringScanCall(mnemonic: mnemonic, repeated: false)
+        case "cmpsb", "cmpsw", "cmpsd", "cmpsq":
+            return stringCompareCall(mnemonic: mnemonic, repeated: false)
+        case "rep", "repe", "repz", "repne", "repnz":
+            guard let operand = parts.first else { return "// \(insn.text)" }
+            return decompileRepeatedOperation(prefix: mnemonic, operand: operand)
+        default:
+            return "// \(insn.text)"
+        }
     }
 
     private func isPrologueEpilogue(_ insn: Instruction) -> Bool {
@@ -1089,5 +1549,239 @@ class EnhancedCodePrinter {
 
     private func indent() -> String {
         String(repeating: "    ", count: indentLevel)
+    }
+
+    private func renderLoopBody(_ body: ControlFlowStructurer.ControlStructure) -> String {
+        let rendered = printStructure(body)
+        if !rendered.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            return rendered
+        }
+        if binary?.format == .dos || binary?.architecture == .x86_16 {
+            return indent() + "// polling loop or hardware delay"
+        }
+        return ""
+    }
+
+    private func normalizeMemoryOperand(_ operand: String) -> (sizeQualifier: String?, segmentOverride: String?, inner: String) {
+        var op = operand.trimmingCharacters(in: .whitespacesAndNewlines)
+        let lowercase = op.lowercased()
+        let qualifiers = ["byte ptr ", "word ptr ", "dword ptr ", "qword ptr "]
+        var sizeQualifier: String?
+
+        for qualifier in qualifiers where lowercase.hasPrefix(qualifier) {
+            sizeQualifier = String(qualifier.dropLast(5)).trimmingCharacters(in: .whitespaces)
+            op = String(op.dropFirst(qualifier.count)).trimmingCharacters(in: .whitespacesAndNewlines)
+            break
+        }
+
+        var segmentOverride: String?
+        if let bracketIndex = op.firstIndex(of: "[") {
+            let prefix = op[..<bracketIndex].trimmingCharacters(in: .whitespacesAndNewlines)
+            if prefix.hasSuffix(":") {
+                segmentOverride = String(prefix.dropLast()).lowercased()
+            }
+        }
+
+        if let open = op.firstIndex(of: "["), let close = op.lastIndex(of: "]"), open < close {
+            op = String(op[op.index(after: open)..<close])
+        }
+
+        return (sizeQualifier, segmentOverride, op)
+    }
+
+    private func typedMemoryReference(sizeQualifier: String?, segment: String?, offset: String) -> String {
+        let pointer: String
+        switch sizeQualifier?.lowercased() {
+        case "byte":
+            pointer = "uint8_t"
+        case "word":
+            pointer = "uint16_t"
+        case "dword":
+            pointer = "uint32_t"
+        case "qword":
+            pointer = "uint64_t"
+        default:
+            pointer = "uint16_t"
+        }
+
+        if let segment {
+            return "*((\(pointer)*)MK_FP(\(segment), \(offset)))"
+        }
+
+        return "*((\(pointer)*)\(offset))"
+    }
+
+    private func namedDirectMemory(sizeQualifier: String?, segment: String?, address: UInt64) -> String {
+        let formattedAddress = address < 0x10000 ? String(format: "%04llX", address) : String(format: "%llX", address)
+        let prefix: String
+        if let segment, !segment.isEmpty, segment != "ds" {
+            prefix = segment.lowercased()
+        } else if sizeQualifier?.lowercased() == "byte" {
+            prefix = "byte"
+        } else {
+            prefix = "global"
+        }
+        return "\(prefix)_\(formattedAddress)"
+    }
+
+    private func parseAddress(_ str: String) -> UInt64? {
+        let trimmed = str.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmed.lowercased().hasPrefix("0x") {
+            return UInt64(trimmed.dropFirst(2), radix: 16)
+        }
+        if trimmed.first?.isNumber == true {
+            return UInt64(trimmed)
+        }
+        return nil
+    }
+
+    private func bitWidth(for operand: String) -> Int {
+        let normalized = operand.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        if ["al", "ah", "bl", "bh", "cl", "ch", "dl", "dh"].contains(normalized) {
+            return 8
+        }
+        if ["ax", "bx", "cx", "dx", "si", "di", "bp", "sp"].contains(normalized) {
+            return 16
+        }
+        if normalized.hasPrefix("e") || normalized.hasSuffix("d") || ["eax", "ebx", "ecx", "edx", "esi", "edi", "ebp", "esp"].contains(normalized) {
+            return 32
+        }
+        if normalized.hasPrefix("r") || normalized.hasPrefix("x") {
+            return 64
+        }
+        return (binary?.architecture.pointerSize ?? 2) * 8
+    }
+
+    private func elementSuffix(for mnemonic: String) -> String {
+        switch mnemonic.suffix(1).lowercased() {
+        case "b":
+            return "bytes"
+        case "w":
+            return "words"
+        case "d":
+            return "dwords"
+        case "q":
+            return "qwords"
+        default:
+            return "items"
+        }
+    }
+
+    private func accumulatorRegister(for mnemonic: String) -> String {
+        switch mnemonic.suffix(1).lowercased() {
+        case "b":
+            return "al"
+        case "w":
+            return "ax"
+        case "d":
+            return "eax"
+        case "q":
+            return "rax"
+        default:
+            return "ax"
+        }
+    }
+
+    private func countRegister() -> String {
+        switch binary?.architecture {
+        case .some(.x86_64):
+            return "rcx"
+        case .some(.i386):
+            return "ecx"
+        default:
+            return "cx"
+        }
+    }
+
+    private func decompileRepeatedOperation(prefix: String, operand: String) -> String {
+        let normalizedOperand = operand.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        let repeated = true
+
+        switch normalizedOperand {
+        case "movsb", "movsw", "movsd", "movsq":
+            return stringMoveCall(mnemonic: normalizedOperand, repeated: repeated)
+        case "stosb", "stosw", "stosd", "stosq":
+            return stringStoreCall(mnemonic: normalizedOperand, repeated: repeated)
+        case "lodsb", "lodsw", "lodsd", "lodsq":
+            return stringLoadCall(mnemonic: normalizedOperand, repeated: repeated)
+        case "scasb", "scasw", "scasd", "scasq":
+            return stringScanCall(mnemonic: normalizedOperand, repeated: repeated)
+        case "cmpsb", "cmpsw", "cmpsd", "cmpsq":
+            return stringCompareCall(mnemonic: normalizedOperand, repeated: repeated)
+        case "insb", "insw", "insd":
+            return streamPortInputCall(mnemonic: normalizedOperand, repeated: repeated)
+        case "outsb", "outsw", "outsd":
+            return streamPortOutputCall(mnemonic: normalizedOperand, repeated: repeated)
+        default:
+            return "// \(prefix) \(operand)"
+        }
+    }
+
+    private func stringMoveCall(mnemonic: String, repeated: Bool) -> String {
+        let suffix = elementSuffix(for: mnemonic)
+        if repeated {
+            return "copy_\(suffix)(es, di, ds, si, \(countRegister()));"
+        }
+        return "copy_\(suffix.dropLast())(es, di, ds, si);"
+    }
+
+    private func stringStoreCall(mnemonic: String, repeated: Bool) -> String {
+        let suffix = elementSuffix(for: mnemonic)
+        let accumulator = accumulatorRegister(for: mnemonic)
+        if repeated {
+            return "fill_\(suffix)(es, di, \(accumulator), \(countRegister()));"
+        }
+        return "store_\(suffix.dropLast())(es, di, \(accumulator));"
+    }
+
+    private func stringLoadCall(mnemonic: String, repeated: Bool) -> String {
+        let accumulator = accumulatorRegister(for: mnemonic)
+        if repeated {
+            return "\(accumulator) = load_sequence(ds, si, \(countRegister()));"
+        }
+        return "\(accumulator) = load_\(elementSuffix(for: mnemonic).dropLast())(ds, si);"
+    }
+
+    private func stringScanCall(mnemonic: String, repeated: Bool) -> String {
+        let accumulator = accumulatorRegister(for: mnemonic)
+        let suffix = elementSuffix(for: mnemonic)
+        if repeated {
+            return "scan_\(suffix)(es, di, \(accumulator), \(countRegister()));"
+        }
+        return "scan_\(suffix.dropLast())(es, di, \(accumulator));"
+    }
+
+    private func stringCompareCall(mnemonic: String, repeated: Bool) -> String {
+        let suffix = elementSuffix(for: mnemonic)
+        if repeated {
+            return "compare_\(suffix)(ds, si, es, di, \(countRegister()));"
+        }
+        return "compare_\(suffix.dropLast())(ds, si, es, di);"
+    }
+
+    private func streamPortInputCall(mnemonic: String, repeated: Bool) -> String {
+        let bits = bitWidth(for: accumulatorRegister(for: mnemonic))
+        if repeated {
+            return "port_stream_in\(bits)(dx, es, di, \(countRegister()));"
+        }
+        return "port_stream_in\(bits)(dx, es, di);"
+    }
+
+    private func streamPortOutputCall(mnemonic: String, repeated: Bool) -> String {
+        let bits = bitWidth(for: accumulatorRegister(for: mnemonic))
+        if repeated {
+            return "port_stream_out\(bits)(dx, ds, si, \(countRegister()));"
+        }
+        return "port_stream_out\(bits)(dx, ds, si);"
+    }
+
+    private func escapeString(_ value: String) -> String {
+        var escaped = value
+        escaped = escaped.replacingOccurrences(of: "\\", with: "\\\\")
+        escaped = escaped.replacingOccurrences(of: "\"", with: "\\\"")
+        escaped = escaped.replacingOccurrences(of: "\n", with: "\\n")
+        escaped = escaped.replacingOccurrences(of: "\r", with: "\\r")
+        escaped = escaped.replacingOccurrences(of: "\t", with: "\\t")
+        return escaped
     }
 }
