@@ -61,7 +61,14 @@ class Decompiler {
             output += decompileInstructions(instructions, indent: 1, binary: binary)
         }
 
+        if !output.hasSuffix("\n") {
+            output += "\n"
+        }
         output += "}\n"
+
+        if binary.format == .dos || binary.architecture == .x86_16 {
+            output = refineDOSPseudoCode(output)
+        }
 
         return output
     }
@@ -104,6 +111,40 @@ class Decompiler {
 
             offset = currentOffset + 1  // Skip null terminator
         }
+    }
+
+    private func refineDOSPseudoCode(_ source: String) -> String {
+        var refined = source
+
+        let replacements: [(pattern: String, template: String)] = [
+            (
+                pattern: #"(?m)^([ \t]*)ax = 0x03;\n\1if \((.+?)\) \{\n\1    ax = 0x07;\n\1\}\n\1bios_set_video_mode\(al\);"#,
+                template: "$1bios_set_video_mode(($2) ? 0x07 : 0x03);"
+            ),
+            (
+                pattern: #"(?m)^([ \t]*)ax = 0x4C00;\n\1dos_exit\(0x00\);"#,
+                template: "$1dos_exit(0x00);"
+            )
+        ]
+
+        for replacement in replacements {
+            refined = replacingRegex(
+                pattern: replacement.pattern,
+                in: refined,
+                template: replacement.template
+            )
+        }
+
+        return refined
+    }
+
+    private func replacingRegex(pattern: String, in source: String, template: String) -> String {
+        guard let regex = try? NSRegularExpression(pattern: pattern) else {
+            return source
+        }
+
+        let range = NSRange(source.startIndex..., in: source)
+        return regex.stringByReplacingMatches(in: source, range: range, withTemplate: template)
     }
 
     // MARK: - Type Inference

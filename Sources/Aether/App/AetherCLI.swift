@@ -575,11 +575,12 @@ private final class CLIContext {
     }
 
     private func analyzedFunction(at address: UInt64, preferredName: String? = nil) throws -> Function? {
-        if let cached = analyzedSingleFunctionsByAddress[address] {
+        if let cached = analyzedSingleFunctionsByAddress[address], !cached.basicBlocks.isEmpty {
             return cached
         }
 
-        if let fullCache = analyzedFunctionsCache?.first(where: { $0.startAddress == address }) {
+        if let fullCache = analyzedFunctionsCache?.first(where: { $0.startAddress == address }),
+           !fullCache.basicBlocks.isEmpty {
             analyzedSingleFunctionsByAddress[address] = fullCache
             return fullCache
         }
