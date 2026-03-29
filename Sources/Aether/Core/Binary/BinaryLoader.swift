@@ -10,6 +10,7 @@ protocol BinaryLoaderProtocol {
 enum BinaryLoaderError: Error, LocalizedError {
     case fileNotFound(URL)
     case unsupportedFormat
+    case unsupportedFormatReason(String)
     case invalidHeader
     case corruptedFile(String)
     case unsupportedArchitecture(String)
@@ -21,6 +22,8 @@ enum BinaryLoaderError: Error, LocalizedError {
             return "File not found: \(url.path)"
         case .unsupportedFormat:
             return "Unsupported binary format"
+        case .unsupportedFormatReason(let reason):
+            return "Unsupported binary format: \(reason)"
         case .invalidHeader:
             return "Invalid file header"
         case .corruptedFile(let reason):

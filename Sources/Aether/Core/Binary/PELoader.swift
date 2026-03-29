@@ -32,6 +32,7 @@ class PELoader: BinaryLoaderProtocol {
     private let IMAGE_DIRECTORY_ENTRY_DEBUG: Int = 6
     private let IMAGE_DIRECTORY_ENTRY_TLS: Int = 9
     private let IMAGE_DIRECTORY_ENTRY_DELAY_IMPORT: Int = 13
+    private let LEGACY_EXECUTABLE_SIGNATURES: Set<String> = ["NE", "LE", "LX"]
 
     // MARK: - Data Directory Entry
     struct DataDirectory {
@@ -64,20 +65,8 @@ class PELoader: BinaryLoaderProtocol {
             throw BinaryLoaderError.invalidHeader
         }
 
-        // Get PE header offset from DOS header
-        guard let peOffset = data.readUInt32LE(at: 0x3C) else {
-            throw BinaryLoaderError.invalidHeader
-        }
-
-        // Validate peOffset
-        guard peOffset < 0x10000, Int(peOffset) + 4 <= data.count else {
-            throw BinaryLoaderError.corruptedFile("Invalid PE offset: \(peOffset)")
-        }
-
-        // Check PE signature
-        guard let peSignature = data.readUInt32LE(at: Int(peOffset)),
-              peSignature == PE_SIGNATURE else {
-            throw BinaryLoaderError.invalidHeader
+        guard let peOffset = resolvePEHeaderOffset(in: data) else {
+            throw unsupportedMZExecutableError(data: data)
         }
 
         let coffOffset = Int(peOffset) + 4
@@ -675,5 +664,46 @@ class PELoader: BinaryLoaderProtocol {
         if (characteristics & IMAGE_SCN_MEM_WRITE) != 0 { prot |= 2 }
         if (characteristics & IMAGE_SCN_MEM_EXECUTE) != 0 { prot |= 4 }
         return prot
+    }
+
+    private func resolvePEHeaderOffset(in data: Data) -> UInt32? {
+        let candidates = [
+            data.readUInt32LE(at: 0x3C),
+            data.readUInt32BE(at: 0x3C)
+        ].compactMap { $0 }
+
+        for candidate in candidates {
+            guard candidate < UInt32(data.count),
+                  Int(candidate) + 4 <= data.count,
+                  let signature = data.readUInt32LE(at: Int(candidate)),
+                  signature == PE_SIGNATURE else {
+                continue
+            }
+            return candidate
+        }
+
+        return nil
+    }
+
+    private func unsupportedMZExecutableError(data: Data) -> BinaryLoaderError {
+        let candidates = [
+            data.readUInt32LE(at: 0x3C),
+            data.readUInt32BE(at: 0x3C)
+        ].compactMap { $0 }
+
+        for candidate in candidates {
+            guard candidate < UInt32(data.count),
+                  Int(candidate) + 2 <= data.count,
+                  let signatureData = data.subdata(offset: Int(candidate), count: 2),
+                  let signature = String(data: signatureData, encoding: .ascii) else {
+                continue
+            }
+
+            if LEGACY_EXECUTABLE_SIGNATURES.contains(signature) {
+                return .unsupportedFormatReason("unsupported \(signature) MZ executable; only PE/COFF executables are supported")
+            }
+        }
+
+        return .unsupportedFormatReason("unsupported MZ executable; no PE/COFF header found")
     }
 }
