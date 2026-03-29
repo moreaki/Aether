@@ -426,6 +426,7 @@ class AppState: ObservableObject {
         loadingMessage = "Analyzing functions..."
         loadingProgress = 0.4
         self.functions = await functionAnalyzer.analyze(binary: binary, disassembler: disassembler)
+        self.functionsByAddress = Dictionary(uniqueKeysWithValues: self.functions.map { ($0.startAddress, $0) })
 
         // Find strings
         loadingMessage = "Extracting strings..."
@@ -455,6 +456,7 @@ class AppState: ObservableObject {
             isLoading = true
             loadingMessage = "Finding functions..."
             self.functions = await functionAnalyzer.analyze(binary: binary, disassembler: disassembler)
+            self.functionsByAddress = Dictionary(uniqueKeysWithValues: self.functions.map { ($0.startAddress, $0) })
             isLoading = false
         }
     }
@@ -818,6 +820,27 @@ class AppState: ObservableObject {
         backendDisplayName(nextJavaDecompilerBackend)
     }
 
+    var selectedBinaryDecompilerBackend: BinaryDecompilerBackend {
+        let rawValue = UserDefaults.standard.string(forKey: BinaryDecompilerBackend.userDefaultsKey)
+        return BinaryDecompilerBackend(rawValue: rawValue ?? "") ?? .native
+    }
+
+    var nextBinaryDecompilerBackend: BinaryDecompilerBackend {
+        selectedBinaryDecompilerBackend == .native ? .radare2 : .native
+    }
+
+    var canSwitchToNextBinaryDecompilerBackend: Bool {
+        guard !isCurrentFileJava else { return false }
+        if nextBinaryDecompilerBackend == .radare2 {
+            return Radare2Decompiler.findExecutablePath() != nil
+        }
+        return true
+    }
+
+    var nextBinaryDecompilerBackendName: String {
+        backendDisplayName(nextBinaryDecompilerBackend)
+    }
+
     func switchToNextJavaDecompilerBackend() {
         guard canSwitchToNextJavaDecompilerBackend else { return }
         UserDefaults.standard.set(nextJavaDecompilerBackend.rawValue, forKey: JavaDecompilerBackend.userDefaultsKey)
@@ -826,13 +849,17 @@ class AppState: ObservableObject {
         }
     }
 
+    func switchToNextBinaryDecompilerBackend() {
+        guard canSwitchToNextBinaryDecompilerBackend else { return }
+        UserDefaults.standard.set(nextBinaryDecompilerBackend.rawValue, forKey: BinaryDecompilerBackend.userDefaultsKey)
+        if selectedFunction != nil {
+            decompileCurrentFunction()
+        }
+    }
+
     func decompileCurrentFunction() {
         guard let function = selectedFunction,
               let binary = currentFile else { return }
-        let dosLimitationMessage = binary.format == .dos
-            ? "DOS MZ binaries are currently analyzed with the generic x86 path. Disassembly and decompilation can be incomplete or inaccurate for 16-bit real-mode code."
-            : nil
-        decompilerEngineError = dosLimitationMessage
 
         // Check if this is a Java class file
         if let javaClasses = binary.javaClasses, !javaClasses.isEmpty {
@@ -840,8 +867,26 @@ class AppState: ObservableObject {
             return
         }
 
+        if selectedBinaryDecompilerBackend == .radare2,
+           Radare2Decompiler.findExecutablePath() != nil {
+            decompileWithRadare2(function: function, binary: binary)
+            return
+        }
+
+        decompileNativeFunction(function: function, binary: binary)
+    }
+
+    private func decompileNativeFunction(
+        function: Function,
+        binary: BinaryFile,
+        prefixComment: String = ""
+    ) {
+        let dosLimitationMessage = binary.format == .dos
+            ? "DOS MZ binaries now use a real 16-bit decoder, but higher-level function recovery and decompilation heuristics are still experimental for real-mode code."
+            : nil
+        decompilerEngineError = dosLimitationMessage
         decompilerOutput = "// Decompiling..."
-        activeDecompilerBackendName = "Native"
+        activeDecompilerBackendName = backendDisplayName(.native)
 
         Task {
             let instructions = await disassembleFunction(function)
@@ -858,11 +903,38 @@ class AppState: ObservableObject {
 
             // Update UI on main thread (automatic via @MainActor)
             if self.selectedFunction?.startAddress == function.startAddress {
+                var finalOutput = output
                 if let dosLimitationMessage {
-                    self.decompilerOutput = "// \(dosLimitationMessage)\n\n\(output)"
-                } else {
-                    self.decompilerOutput = output
+                    finalOutput = "// \(dosLimitationMessage)\n\n\(finalOutput)"
                 }
+                if !prefixComment.isEmpty {
+                    finalOutput = prefixComment + finalOutput
+                }
+                self.decompilerOutput = finalOutput
+            }
+        }
+    }
+
+    private func decompileWithRadare2(function: Function, binary: BinaryFile) {
+        decompilerEngineError = nil
+        decompilerOutput = "// Decompiling with radare2...\n"
+        activeDecompilerBackendName = backendDisplayName(.radare2)
+
+        Task {
+            do {
+                let source = try await Task.detached(priority: .userInitiated) {
+                    try Radare2Decompiler().decompile(function: function, binary: binary)
+                }.value
+
+                if self.selectedFunction?.startAddress == function.startAddress {
+                    self.activeDecompilerBackendName = self.backendDisplayName(.radare2)
+                    self.decompilerOutput = source
+                }
+            } catch {
+                self.decompilerEngineError = error.localizedDescription
+                var fallbackMessage = "// radare2 backend failed (\(error.localizedDescription)).\n"
+                fallbackMessage += "// Falling back to native decompiler.\n\n"
+                self.decompileNativeFunction(function: function, binary: binary, prefixComment: fallbackMessage)
             }
         }
     }
@@ -1016,6 +1088,15 @@ class AppState: ObservableObject {
             return "Internal"
         case .vineflower:
             return "Vineflower"
+        }
+    }
+
+    private func backendDisplayName(_ backend: BinaryDecompilerBackend) -> String {
+        switch backend {
+        case .native:
+            return "Native"
+        case .radare2:
+            return "radare2"
         }
     }
 
@@ -1640,7 +1721,10 @@ class AppState: ObservableObject {
             return renamed
         }
         if let func_ = functionsByAddress[address] {
-            return func_.name
+            return func_.displayName
+        }
+        if currentFile?.format == .dos || currentFile?.architecture == .x86_16 {
+            return String(format: "proc_%04llX", address)
         }
         return String(format: "sub_%llX", address)
     }

@@ -4,6 +4,8 @@ import Security
 struct DecompilerSettingsTab: View {
     @AppStorage(SyntaxHighlightEngine.userDefaultsKey) private var syntaxEngine = SyntaxHighlightEngine.internalEngine.rawValue
     @AppStorage(DecompilerLineNumberingMode.userDefaultsKey) private var lineNumberingMode = DecompilerLineNumberingMode.allOutput.rawValue
+    @AppStorage(BinaryDecompilerBackend.userDefaultsKey) private var binaryBackend = BinaryDecompilerBackend.native.rawValue
+    @State private var radare2Path: String?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
@@ -39,6 +41,52 @@ struct DecompilerSettingsTab: View {
             }
 
             VStack(alignment: .leading, spacing: 8) {
+                Text("Binary Decompiler Backend")
+                    .font(.subheadline)
+                    .fontWeight(.medium)
+
+                Picker("", selection: $binaryBackend) {
+                    Text("Native")
+                        .tag(BinaryDecompilerBackend.native.rawValue)
+                    if radare2Path != nil {
+                        Text("radare2")
+                            .tag(BinaryDecompilerBackend.radare2.rawValue)
+                    }
+                }
+                .labelsHidden()
+                .pickerStyle(.segmented)
+            }
+
+            VStack(alignment: .leading, spacing: 8) {
+                HStack {
+                    Text("radare2 Status")
+                        .font(.subheadline)
+                        .fontWeight(.medium)
+                    Spacer()
+                    Button("Refresh") {
+                        refreshRadare2Status()
+                    }
+                }
+
+                if let radare2Path {
+                    Label("radare2 available", systemImage: "checkmark.circle.fill")
+                        .foregroundColor(.green)
+                        .font(.caption)
+                    Text(radare2Path)
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                        .textSelection(.enabled)
+                } else {
+                    Label("radare2 not found", systemImage: "xmark.circle.fill")
+                        .foregroundColor(.red)
+                        .font(.caption)
+                    Text("Native remains the default when the external backend is unavailable.")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                }
+            }
+
+            VStack(alignment: .leading, spacing: 8) {
                 Text(translate("settings.decompiler.lineNumbers"))
                     .font(.subheadline)
                     .fontWeight(.medium)
@@ -58,6 +106,8 @@ struct DecompilerSettingsTab: View {
             VStack(alignment: .leading, spacing: 6) {
                 Label(translate("settings.decompiler.info.internal"), systemImage: "hammer")
                     .font(.caption)
+                Label("radare2 can provide alternate DOS pseudocode when available.", systemImage: "terminal")
+                    .font(.caption)
                 Label(translate("settings.decompiler.info.highlightswift"), systemImage: "paintbrush.pointed")
                     .font(.caption)
                 Label(translate("settings.decompiler.info.lineNumbers"), systemImage: "list.number")
@@ -70,6 +120,16 @@ struct DecompilerSettingsTab: View {
             Spacer()
         }
         .padding()
+        .onAppear {
+            refreshRadare2Status()
+        }
+    }
+
+    private func refreshRadare2Status() {
+        radare2Path = Radare2Decompiler.findExecutablePath()
+        if radare2Path == nil && binaryBackend == BinaryDecompilerBackend.radare2.rawValue {
+            binaryBackend = BinaryDecompilerBackend.native.rawValue
+        }
     }
 }
 

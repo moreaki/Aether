@@ -32,6 +32,11 @@ struct DecompilerView: View {
                 Text("Backend: \(appState.activeDecompilerBackendName)")
                     .font(.caption)
                     .foregroundColor(.secondary)
+                if hasFunctionReferences(appState.decompilerOutput, appState: appState) {
+                    Text("Use Jump on call lines")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                }
                 Spacer()
 
                 if appState.isCurrentFileJava {
@@ -42,6 +47,14 @@ struct DecompilerView: View {
                     .controlSize(.small)
                     .disabled(!appState.canSwitchToNextJavaDecompilerBackend)
                     .help(appState.canSwitchToNextJavaDecompilerBackend ? "Switch Java decompiler backend" : "Alternative backend is unavailable")
+                } else {
+                    Button("Switch to \(appState.nextBinaryDecompilerBackendName)") {
+                        appState.switchToNextBinaryDecompilerBackend()
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+                    .disabled(!appState.canSwitchToNextBinaryDecompilerBackend)
+                    .help(appState.canSwitchToNextBinaryDecompilerBackend ? "Switch native/external binary decompiler backend" : "Alternative backend is unavailable")
                 }
 
                 Button("Syntax: \(selectedSyntaxHighlightEngine.displayName)") {
@@ -142,6 +155,7 @@ struct HighlightSwiftCodeView: View {
     let fontSize: Double
     let language: String?
     let lineNumberingMode: DecompilerLineNumberingMode
+    @EnvironmentObject var appState: AppState
     @Environment(\.colorScheme) private var colorScheme
     @State private var highlightedLines: [AttributedString] = []
 
@@ -183,6 +197,8 @@ struct HighlightSwiftCodeView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             ForEach(Array(displayLines.enumerated()), id: \.offset) { index, line in
+                let plainLine = displayPlainLines[index]
+                let targetFunction = referencedFunction(in: plainLine, appState: appState)
                 HStack(alignment: .firstTextBaseline, spacing: 0) {
                     Text(displayLineNumber(index: index))
                         .font(.system(size: fontSize, design: .monospaced))
@@ -196,6 +212,11 @@ struct HighlightSwiftCodeView: View {
                         .font(.system(size: fontSize, design: .monospaced))
                         .fixedSize(horizontal: true, vertical: false)
                         .textSelection(.enabled)
+
+                    if let targetFunction {
+                        JumpToFunctionButton(function: targetFunction)
+                            .environmentObject(appState)
+                    }
                 }
             }
         }
@@ -320,6 +341,7 @@ struct SyntaxHighlightedCode: View {
     let fontName: String
     let isJavaStyle: Bool
     let lineNumberingMode: DecompilerLineNumberingMode
+    @EnvironmentObject var appState: AppState
 
     private var lines: [String] {
         normalizedLines(from: code)
@@ -348,6 +370,7 @@ struct SyntaxHighlightedCode: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             ForEach(Array(lines.enumerated()), id: \.offset) { index, line in
+                let targetFunction = referencedFunction(in: line, appState: appState)
                 HStack(alignment: .firstTextBaseline, spacing: 0) {
                     // Line number
                     Text(displayLineNumber(index: index))
@@ -359,6 +382,11 @@ struct SyntaxHighlightedCode: View {
 
                     // Code line
                     highlightedLine(String(line))
+
+                    if let targetFunction {
+                        JumpToFunctionButton(function: targetFunction)
+                            .environmentObject(appState)
+                    }
                 }
             }
         }
@@ -511,6 +539,24 @@ struct SyntaxHighlightedCode: View {
     }
 }
 
+private struct JumpToFunctionButton: View {
+    let function: Function
+    @EnvironmentObject private var appState: AppState
+
+    var body: some View {
+        Button {
+            appState.selectFunction(function)
+        } label: {
+            Label("Jump", systemImage: "arrow.up.forward.square")
+                .font(.system(size: 11, weight: .semibold))
+        }
+        .buttonStyle(.bordered)
+        .controlSize(.mini)
+        .padding(.leading, 8)
+        .help("Jump to \(function.displayName)")
+    }
+}
+
 private func normalizedLines(from code: String) -> [String] {
     let splitLines = code.split(separator: "\n", omittingEmptySubsequences: false).map(String.init)
     guard !splitLines.isEmpty else {
@@ -549,6 +595,51 @@ private func lineNumberString(
         }
         return "\(index - firstContentLine + 1)"
     }
+}
+
+@MainActor
+private func referencedFunction(in line: String, appState: AppState) -> Function? {
+    let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !trimmed.isEmpty, !trimmed.hasPrefix("//") else {
+        return nil
+    }
+
+    let pattern = #"\b([A-Za-z_][A-Za-z0-9_]*)\s*\("#
+    guard let regex = try? NSRegularExpression(pattern: pattern) else {
+        return nil
+    }
+
+    let matches = regex.matches(in: line, range: NSRange(line.startIndex..., in: line))
+    let keywords: Set<String> = ["if", "while", "for", "switch", "return", "sizeof"]
+
+    for match in matches {
+        guard match.numberOfRanges > 1,
+              let range = Range(match.range(at: 1), in: line) else {
+            continue
+        }
+
+        let candidate = String(line[range])
+        if keywords.contains(candidate) {
+            continue
+        }
+
+        if let function = appState.functions.first(where: {
+            let displayName = appState.getDisplayName(forFunctionAt: $0.startAddress)
+            return displayName == candidate || $0.displayName == candidate || $0.shortDisplayName == candidate
+        }) {
+            if function.startAddress == appState.selectedFunction?.startAddress {
+                continue
+            }
+            return function
+        }
+    }
+
+    return nil
+}
+
+@MainActor
+private func hasFunctionReferences(_ code: String, appState: AppState) -> Bool {
+    normalizedLines(from: code).contains { referencedFunction(in: $0, appState: appState) != nil }
 }
 
 // MARK: - Character Extensions
