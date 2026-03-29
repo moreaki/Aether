@@ -100,7 +100,9 @@ enum AetherCLI {
             useCache: invocation.useCache,
             refreshCache: invocation.refreshCache
         )
-        let functions = try context.functions()
+        let functions = try invocation.command == .listAllFunctions
+            ? context.discoveredFunctions()
+            : context.functions()
 
         switch invocation.outputFormat {
         case .plain, .ansi:
@@ -371,6 +373,24 @@ private final class CLIContext {
             return javaFunctions
         }
         return try analyzedFunctions(forceRefresh: refreshCache)
+    }
+
+    func discoveredFunctions() throws -> [Function] {
+        if let javaFunctions = javaFunctions() {
+            return javaFunctions
+        }
+        if let analyzedFunctionsCache, !refreshCache {
+            return analyzedFunctionsCache
+        }
+
+        let discovered = try waitForAsyncResult { [self] in
+            await self.functionAnalyzer.discover(binary: self.binary, disassembler: self.disassembler)
+        }
+        analyzedFunctionsCache = discovered
+        if useCache {
+            try cacheManager.save(functions: discovered)
+        }
+        return discovered
     }
 
     func resolveFunction(identifier: String?) throws -> Function {

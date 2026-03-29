@@ -183,6 +183,10 @@ class Decompiler {
             (
                 pattern: #"(?m)^([ \t]*)result = 0;\n\1return;"#,
                 template: "$1return;"
+            ),
+            (
+                pattern: #"(?m)^([ \t]*)arg1 = 0;\n\1return;"#,
+                template: "$1return;"
             )
         ]
 
@@ -450,9 +454,8 @@ class Decompiler {
         var usedArgs: [String: String] = [:] // reg -> inferred type
 
         for insn in instructions {
-            let operands = insn.operands.lowercased()
             for (_, reg) in argRegs.enumerated() {
-                if operands.contains(reg.lowercased()) {
+                if instructionReadsRegister(insn, register: reg) {
                     let type = inferOperandType(insn: insn, operand: reg)
                     usedArgs[reg] = type
                 }
@@ -476,6 +479,30 @@ class Decompiler {
         }
 
         return params
+    }
+
+    private func instructionReadsRegister(_ insn: Instruction, register: String) -> Bool {
+        let normalizedRegister = register.lowercased()
+        let operands = insn.operands
+            .split(separator: ",")
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() }
+
+        guard !operands.isEmpty else {
+            return false
+        }
+
+        let mentions: (String) -> Bool = { operand in
+            operand.range(of: #"(?<![A-Za-z0-9_])\#(normalizedRegister)(?![A-Za-z0-9_])"#, options: .regularExpression) != nil
+        }
+
+        switch insn.type {
+        case .move, .load:
+            return operands.dropFirst().contains(where: mentions)
+        case .return:
+            return false
+        default:
+            return operands.contains(where: mentions)
+        }
     }
 
     private func inferStackParameters(instructions: [Instruction], architecture: Architecture) -> [String] {
@@ -1078,7 +1105,7 @@ class Decompiler {
             "r10": "temp1", "r11": "temp2",
             "r12": "r12_saved", "r13": "r13_saved", "r14": "r14_saved", "r15": "r15_saved",
             // ARM64
-            "x0": "result", "w0": "result",
+            "x0": "arg1", "w0": "arg1",
             "x1": "arg2", "w1": "arg2",
             "x2": "arg3", "w2": "arg3",
             "x3": "arg4", "w3": "arg4",
@@ -1769,7 +1796,7 @@ class EnhancedCodePrinter {
 
         let regMap: [String: String] = [
             "rax": "result", "eax": "result",
-            "rdi": "arg1", "edi": "arg1", "x0": "result", "w0": "result",
+            "rdi": "arg1", "edi": "arg1", "x0": "arg1", "w0": "arg1",
             "rsi": "arg2", "esi": "arg2", "x1": "arg2", "w1": "arg2",
             "rdx": "arg3", "edx": "arg3", "x2": "arg3", "w2": "arg3",
             "rcx": "arg4", "ecx": "arg4", "x3": "arg4", "w3": "arg4",

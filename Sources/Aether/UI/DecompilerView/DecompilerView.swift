@@ -237,6 +237,10 @@ struct HighlightSwiftCodeView: View {
                         JumpToFunctionButton(function: targetFunction)
                             .environmentObject(appState)
                     }
+
+                    if let semanticHelp {
+                        SemanticHelpBadge(text: semanticHelp)
+                    }
                 }
             }
         }
@@ -408,6 +412,10 @@ struct SyntaxHighlightedCode: View {
                     if let targetFunction {
                         JumpToFunctionButton(function: targetFunction)
                             .environmentObject(appState)
+                    }
+
+                    if let semanticHelp {
+                        SemanticHelpBadge(text: semanticHelp)
                     }
                 }
             }
@@ -671,6 +679,28 @@ private struct OptionalHelpModifier: ViewModifier {
         } else {
             content
         }
+    }
+}
+
+private struct SemanticHelpBadge: View {
+    let text: String
+    @State private var showPopover = false
+
+    var body: some View {
+        Image(systemName: "info.circle")
+            .font(.system(size: 11, weight: .semibold))
+            .foregroundColor(.secondary)
+            .padding(.leading, 8)
+            .onHover { hovering in
+                showPopover = hovering
+            }
+            .popover(isPresented: $showPopover, arrowEdge: .bottom) {
+                Text(text)
+                    .font(.system(.body))
+                    .frame(maxWidth: 320, alignment: .leading)
+                    .padding(12)
+            }
+            .help("Show helper explanation")
     }
 }
 

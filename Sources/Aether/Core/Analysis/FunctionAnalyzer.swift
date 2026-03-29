@@ -3,107 +3,34 @@ import Foundation
 /// Analyzes binary to identify functions
 class FunctionAnalyzer {
 
+    /// Discover likely functions without building CFG/basic blocks for each one.
+    func discover(binary: BinaryFile, disassembler: DisassemblerEngine) async -> [Function] {
+        var functions = await initialFunctionCandidates(binary: binary, disassembler: disassembler)
+        assignTentativeEndAddresses(to: &functions, binary: binary)
+        assignAutoNames(to: &functions, binary: binary)
+        return functions
+    }
+
     /// Analyze binary and identify functions
     func analyze(binary: BinaryFile, disassembler: DisassemblerEngine) async -> [Function] {
-        var functions: [Function] = []
-        var functionAddresses = Set<UInt64>()
-        let minimumFunctionSize = UInt64(max(binary.architecture.pointerSize, 1))
+        var functions = await discover(binary: binary, disassembler: disassembler)
 
-        // 1. Get functions from symbols
-        for symbol in binary.symbols where symbol.type == .function && symbol.address != 0 {
-            if !functionAddresses.contains(symbol.address) {
-                functionAddresses.insert(symbol.address)
-                functions.append(Function(
-                    name: symbol.name,
-                    startAddress: symbol.address,
-                    endAddress: symbol.address + max(symbol.size, minimumFunctionSize)
-                ))
-            }
-        }
-
-        // 2. Add entry point
-        if binary.entryPoint != 0 && !functionAddresses.contains(binary.entryPoint) {
-            functionAddresses.insert(binary.entryPoint)
-            functions.append(Function(
-                name: "_start",
-                startAddress: binary.entryPoint,
-                endAddress: binary.entryPoint + minimumFunctionSize
-            ))
-        }
-
-        // 3. Scan code sections for function prologues and call targets
-        for section in binary.sections where section.containsCode {
-            let instructions = await disassembler.disassemble(
-                data: section.data,
-                address: section.address,
-                architecture: binary.architecture
-            )
-            let instructionAddresses = Set(instructions.map(\.address))
-
-            // Find call targets
-            for insn in instructions {
-                if insn.type == .call, let target = insn.branchTarget {
-                    if !functionAddresses.contains(target) &&
-                       instructionAddresses.contains(target) &&
-                       section.contains(address: target) {
-                        functionAddresses.insert(target)
-                        functions.append(Function(
-                            name: "",
-                            startAddress: target,
-                            endAddress: target + minimumFunctionSize
-                        ))
-                    }
-                }
-            }
-
-            // Find function prologues
-            let prologueAddresses = findFunctionPrologues(
-                instructions: instructions,
-                architecture: binary.architecture
-            )
-
-            for addr in prologueAddresses {
-                if !functionAddresses.contains(addr) {
-                    functionAddresses.insert(addr)
-                    functions.append(Function(
-                        name: "",
-                        startAddress: addr,
-                        endAddress: addr + minimumFunctionSize
-                    ))
-                }
-            }
-        }
-
-        // 4. Sort by address
-        functions.sort { $0.startAddress < $1.startAddress }
-
-        // 5. Calculate function end addresses
+        // Refine end addresses with actual control-flow reachability before building CFG.
         for i in 0..<functions.count {
-            var tentativeEnd = functions[i].endAddress
-            if i + 1 < functions.count {
-                // End at next function start
-                tentativeEnd = functions[i + 1].startAddress
-            } else {
-                // Last function - find the section end
-                if let section = binary.sections.first(where: { $0.contains(address: functions[i].startAddress) }) {
-                    tentativeEnd = section.address + section.size
-                }
+            guard let section = binary.sections.first(where: { $0.contains(address: functions[i].startAddress) }) else {
+                continue
             }
-            functions[i].endAddress = tentativeEnd
-
-            // Refine end address by finding return instructions
-            if let section = binary.sections.first(where: { $0.contains(address: functions[i].startAddress) }) {
-                let refinedEnd = await findFunctionEnd(
-                    function: functions[i],
-                    section: section,
-                    disassembler: disassembler,
-                    binary: binary
-                )
-                if refinedEnd > functions[i].startAddress {
-                    let sectionEnd = section.address + section.size
-                    let clampedRefinedEnd = min(refinedEnd, sectionEnd)
-                    functions[i].endAddress = max(tentativeEnd, clampedRefinedEnd)
-                }
+            let tentativeEnd = functions[i].endAddress
+            let refinedEnd = await findFunctionEnd(
+                function: functions[i],
+                section: section,
+                disassembler: disassembler,
+                binary: binary
+            )
+            if refinedEnd > functions[i].startAddress {
+                let sectionEnd = section.address + section.size
+                let clampedRefinedEnd = min(refinedEnd, sectionEnd)
+                functions[i].endAddress = max(tentativeEnd, clampedRefinedEnd)
             }
         }
 
@@ -122,6 +49,85 @@ class FunctionAnalyzer {
         assignAutoNames(to: &functions, binary: binary)
 
         return functions
+    }
+
+    private func initialFunctionCandidates(binary: BinaryFile, disassembler: DisassemblerEngine) async -> [Function] {
+        var functions: [Function] = []
+        var functionAddresses = Set<UInt64>()
+        let minimumFunctionSize = UInt64(max(binary.architecture.pointerSize, 1))
+
+        for symbol in binary.symbols where symbol.type == .function && symbol.address != 0 {
+            if !functionAddresses.contains(symbol.address) {
+                functionAddresses.insert(symbol.address)
+                functions.append(Function(
+                    name: symbol.name,
+                    startAddress: symbol.address,
+                    endAddress: symbol.address + max(symbol.size, minimumFunctionSize)
+                ))
+            }
+        }
+
+        if binary.entryPoint != 0 && !functionAddresses.contains(binary.entryPoint) {
+            functionAddresses.insert(binary.entryPoint)
+            functions.append(Function(
+                name: "_start",
+                startAddress: binary.entryPoint,
+                endAddress: binary.entryPoint + minimumFunctionSize
+            ))
+        }
+
+        for section in binary.sections where section.containsCode {
+            let instructions = await disassembler.disassemble(
+                data: section.data,
+                address: section.address,
+                architecture: binary.architecture
+            )
+            let instructionAddresses = Set(instructions.map(\.address))
+
+            for insn in instructions {
+                if insn.type == .call, let target = insn.branchTarget {
+                    if !functionAddresses.contains(target) &&
+                        instructionAddresses.contains(target) &&
+                        section.contains(address: target) {
+                        functionAddresses.insert(target)
+                        functions.append(Function(
+                            name: "",
+                            startAddress: target,
+                            endAddress: target + minimumFunctionSize
+                        ))
+                    }
+                }
+            }
+
+            let prologueAddresses = findFunctionPrologues(
+                instructions: instructions,
+                architecture: binary.architecture
+            )
+
+            for addr in prologueAddresses where !functionAddresses.contains(addr) {
+                functionAddresses.insert(addr)
+                functions.append(Function(
+                    name: "",
+                    startAddress: addr,
+                    endAddress: addr + minimumFunctionSize
+                ))
+            }
+        }
+
+        functions.sort { $0.startAddress < $1.startAddress }
+        return functions
+    }
+
+    private func assignTentativeEndAddresses(to functions: inout [Function], binary: BinaryFile) {
+        for i in 0..<functions.count {
+            var tentativeEnd = functions[i].endAddress
+            if i + 1 < functions.count {
+                tentativeEnd = functions[i + 1].startAddress
+            } else if let section = binary.sections.first(where: { $0.contains(address: functions[i].startAddress) }) {
+                tentativeEnd = section.address + section.size
+            }
+            functions[i].endAddress = tentativeEnd
+        }
     }
 
     /// Analyze a single function without scanning the whole binary.
