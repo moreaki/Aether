@@ -141,18 +141,27 @@ struct HexRow: View {
     let bytesPerRow: Int
     let selectedAddress: UInt64
 
+    private var rowStart: Int {
+        rowIndex * bytesPerRow
+    }
+
+    private var rowByteCount: Int {
+        guard rowStart >= 0, rowStart < data.count else {
+            return 0
+        }
+        return min(bytesPerRow, data.count - rowStart)
+    }
+
     private var rowAddress: UInt64 {
         baseAddress + UInt64(rowIndex * bytesPerRow)
     }
 
-    private var rowData: [UInt8] {
-        let start = rowIndex * bytesPerRow
-        guard start >= 0 && start < data.count else {
-            return []
+    private func byte(at index: Int) -> UInt8? {
+        let absoluteIndex = rowStart + index
+        guard index >= 0, absoluteIndex >= 0, absoluteIndex < data.count else {
+            return nil
         }
-
-        let end = min(start + bytesPerRow, data.count)
-        return Array(data[start..<end])
+        return data[absoluteIndex]
     }
 
     private var isSelected: Bool {
@@ -162,8 +171,6 @@ struct HexRow: View {
     }
 
     var body: some View {
-        let rowData = rowData
-
         HStack(spacing: 0) {
             // Address
             Text(String(format: "%08llX", rowAddress))
@@ -174,13 +181,13 @@ struct HexRow: View {
             // Hex bytes
             HStack(spacing: 4) {
                 ForEach(0..<bytesPerRow, id: \.self) { i in
-                    if i < rowData.count {
+                    if let byte = byte(at: i) {
                         let byteAddress = rowAddress + UInt64(i)
                         let isHighlighted = byteAddress == selectedAddress
 
-                        Text(String(format: "%02X", rowData[i]))
+                        Text(String(format: "%02X", byte))
                             .font(.system(.caption, design: .monospaced))
-                            .foregroundColor(isHighlighted ? .accent : byteColor(rowData[i]))
+                            .foregroundColor(isHighlighted ? .accent : byteColor(byte))
                             .frame(width: 20)
                             .background(isHighlighted ? Color.accent.opacity(0.3) : Color.clear)
                             .cornerRadius(2)
@@ -197,10 +204,12 @@ struct HexRow: View {
 
             // ASCII representation
             HStack(spacing: 0) {
-                ForEach(0..<rowData.count, id: \.self) { i in
-                    Text(asciiChar(rowData[i]))
-                        .font(.system(.caption, design: .monospaced))
-                        .foregroundColor(isPrintable(rowData[i]) ? .primary : .secondary)
+                ForEach(0..<rowByteCount, id: \.self) { i in
+                    if let byte = byte(at: i) {
+                        Text(asciiChar(byte))
+                            .font(.system(.caption, design: .monospaced))
+                            .foregroundColor(isPrintable(byte) ? .primary : .secondary)
+                    }
                 }
             }
             .frame(width: CGFloat(bytesPerRow) * 8, alignment: .leading)

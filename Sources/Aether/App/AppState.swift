@@ -829,7 +829,10 @@ class AppState: ObservableObject {
     func decompileCurrentFunction() {
         guard let function = selectedFunction,
               let binary = currentFile else { return }
-        decompilerEngineError = nil
+        let dosLimitationMessage = binary.format == .dos
+            ? "DOS MZ binaries are currently analyzed with the generic x86 path. Disassembly and decompilation can be incomplete or inaccurate for 16-bit real-mode code."
+            : nil
+        decompilerEngineError = dosLimitationMessage
 
         // Check if this is a Java class file
         if let javaClasses = binary.javaClasses, !javaClasses.isEmpty {
@@ -855,7 +858,11 @@ class AppState: ObservableObject {
 
             // Update UI on main thread (automatic via @MainActor)
             if self.selectedFunction?.startAddress == function.startAddress {
-                self.decompilerOutput = output
+                if let dosLimitationMessage {
+                    self.decompilerOutput = "// \(dosLimitationMessage)\n\n\(output)"
+                } else {
+                    self.decompilerOutput = output
+                }
             }
         }
     }

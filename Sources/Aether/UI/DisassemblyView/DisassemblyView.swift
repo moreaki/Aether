@@ -2,13 +2,15 @@ import SwiftUI
 
 struct DisassemblyView: View {
     @EnvironmentObject var appState: AppState
+    @State private var allInstructions: [Instruction] = []
     @State private var instructions: [Instruction] = []
     @State private var branches: [BranchInfo] = []
     @State private var isLoading = false
-    @State private var maxInstructions = 500  // Limit to prevent freezing
+    @State private var instructionDisplayLimit = 2000
     @State private var showBranchArrows = true
     @State private var showJumpTable = false
     @State private var showConditionalJumps = false
+    private let instructionDisplayStep = 2000
 
     var body: some View {
         VStack(spacing: 0) {
@@ -18,6 +20,18 @@ struct DisassemblyView: View {
                     .foregroundColor(.accent)
                 Text("Disassembly")
                     .font(.headline)
+
+                if appState.currentFile?.format == .dos {
+                    Text("DOS 16-bit analysis is partial")
+                        .font(.caption)
+                        .foregroundColor(.orange)
+                }
+
+                if !allInstructions.isEmpty {
+                    Text("\(instructions.count)/\(allInstructions.count)")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                }
 
                 Spacer()
 
@@ -65,6 +79,24 @@ struct DisassemblyView: View {
                 .buttonStyle(.plain)
                 .help("Patch conditional jumps")
                 .disabled(instructions.isEmpty)
+
+                if instructions.count < allInstructions.count {
+                    Button("More") {
+                        instructionDisplayLimit += instructionDisplayStep
+                        applyInstructionLimit()
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+                    .help("Show more instructions")
+
+                    Button("All") {
+                        instructionDisplayLimit = allInstructions.count
+                        applyInstructionLimit()
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+                    .help("Show all decoded instructions")
+                }
 
             }
             .padding(.horizontal, 12)
@@ -125,16 +157,16 @@ struct DisassemblyView: View {
         }
         .background(Color.background)
         .onChange(of: appState.currentFile?.id) { _, _ in
-            loadInstructions()
+            loadInstructions(resetLimit: true)
         }
         .onChange(of: appState.selectedFunction?.id) { _, _ in
-            loadInstructions()
+            loadInstructions(resetLimit: true)
         }
         .onChange(of: appState.selectedSection?.id) { _, _ in
-            loadInstructions()
+            loadInstructions(resetLimit: true)
         }
         .onAppear {
-            loadInstructions()
+            loadInstructions(resetLimit: true)
         }
         .sheet(isPresented: $showJumpTable) {
             JumpTableView(branches: branches)
@@ -146,11 +178,16 @@ struct DisassemblyView: View {
         }
     }
 
-    private func loadInstructions() {
+    private func loadInstructions(resetLimit: Bool) {
         guard appState.currentFile != nil else {
+            allInstructions = []
             instructions = []
             branches = []
             return
+        }
+
+        if resetLimit {
+            instructionDisplayLimit = instructionDisplayStep
         }
 
         isLoading = true
@@ -164,18 +201,16 @@ struct DisassemblyView: View {
                 result = await appState.disassemble(section: section)
             }
 
-            // Limit instructions to prevent UI freeze
-            if result.count > maxInstructions {
-                instructions = Array(result.prefix(maxInstructions))
-            } else {
-                instructions = result
-            }
-
-            // Analyze branches
-            branches = BranchAnalyzer.analyzeBranches(instructions: instructions)
-
+            allInstructions = result
+            applyInstructionLimit()
             isLoading = false
         }
+    }
+
+    private func applyInstructionLimit() {
+        let visibleCount = min(instructionDisplayLimit, allInstructions.count)
+        instructions = Array(allInstructions.prefix(visibleCount))
+        branches = BranchAnalyzer.analyzeBranches(instructions: instructions)
     }
 }
 
