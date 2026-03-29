@@ -124,6 +124,55 @@ class FunctionAnalyzer {
         return functions
     }
 
+    /// Analyze a single function without scanning the whole binary.
+    func analyzeSingleFunction(
+        binary: BinaryFile,
+        disassembler: DisassemblerEngine,
+        address: UInt64,
+        preferredName: String? = nil
+    ) async -> Function? {
+        guard let section = binary.sections.first(where: { $0.contains(address: address) }) else {
+            return nil
+        }
+
+        let minimumFunctionSize = UInt64(max(binary.architecture.pointerSize, 1))
+        let tentativeEnd = tentativeFunctionEnd(
+            for: address,
+            binary: binary,
+            section: section,
+            minimumFunctionSize: minimumFunctionSize
+        )
+
+        var function = Function(
+            name: preferredName ?? inferredFunctionName(at: address, binary: binary),
+            startAddress: address,
+            endAddress: tentativeEnd
+        )
+
+        let refinedEnd = await findFunctionEnd(
+            function: function,
+            section: section,
+            disassembler: disassembler,
+            binary: binary
+        )
+        if refinedEnd > function.startAddress {
+            function.endAddress = max(function.endAddress, refinedEnd)
+        }
+
+        function.basicBlocks = await buildBasicBlocks(
+            function: function,
+            binary: binary,
+            disassembler: disassembler
+        )
+        function.isLeaf = !function.basicBlocks.flatMap(\.instructions).contains { $0.type == .call }
+
+        if function.name.isEmpty {
+            function.name = inferredFunctionName(at: address, binary: binary)
+        }
+
+        return function
+    }
+
     // MARK: - Prologue Detection
 
     private func findFunctionPrologues(instructions: [Instruction], architecture: Architecture) -> [UInt64] {
@@ -237,6 +286,40 @@ class FunctionAnalyzer {
         }
 
         return "\(baseName)_\(String(format: "%04llX", address))"
+    }
+
+    private func tentativeFunctionEnd(
+        for address: UInt64,
+        binary: BinaryFile,
+        section: Section,
+        minimumFunctionSize: UInt64
+    ) -> UInt64 {
+        let sectionEnd = section.address + section.size
+
+        if let symbol = binary.symbols.first(where: { $0.type == .function && $0.address == address && $0.size > 0 }) {
+            return min(address + max(symbol.size, minimumFunctionSize), sectionEnd)
+        }
+
+        let nextKnownStart = binary.symbols
+            .filter { $0.type == .function && $0.address > address }
+            .map(\.address)
+            .min()
+
+        let defaultWindow = min(address + 0x400, sectionEnd)
+        return min(nextKnownStart ?? defaultWindow, sectionEnd)
+    }
+
+    private func inferredFunctionName(at address: UInt64, binary: BinaryFile) -> String {
+        if let symbol = binary.symbols.first(where: { $0.type == .function && $0.address == address }) {
+            return symbol.name
+        }
+        if address == binary.entryPoint {
+            return "start"
+        }
+        if binary.format == .dos || binary.architecture == .x86_16 {
+            return String(format: "proc_%04llX", address)
+        }
+        return String(format: "sub_%llX", address)
     }
 
     // MARK: - Function End Detection
