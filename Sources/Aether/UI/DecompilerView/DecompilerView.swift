@@ -40,15 +40,6 @@ struct DecompilerView: View {
                 Spacer()
 
                 if appState.canNavigateDecompilerBack {
-                    Button {
-                        appState.navigateDecompilerBack()
-                    } label: {
-                        Label("Back", systemImage: "arrow.uturn.backward")
-                    }
-                    .buttonStyle(.bordered)
-                    .controlSize(.small)
-                    .help("Jump back to the previous decompiler function")
-
                     Menu {
                         ForEach(appState.decompilerJumpHistoryItems, id: \.startAddress) { function in
                             Button(function.displayName) {
@@ -56,10 +47,14 @@ struct DecompilerView: View {
                             }
                         }
                     } label: {
-                        Label("History", systemImage: "clock.arrow.circlepath")
+                        Label("Back", systemImage: "arrow.uturn.backward")
+                    }
+                    primaryAction: {
+                        appState.navigateDecompilerBack()
                     }
                     .buttonStyle(.bordered)
                     .controlSize(.small)
+                    .help("Click to jump back to the previous decompiler function, or open the menu for older history")
                 }
 
                 if appState.isCurrentFileJava {

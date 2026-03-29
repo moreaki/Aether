@@ -108,6 +108,7 @@ class AppState: ObservableObject {
     var symbolsByAddress: [UInt64: Symbol] = [:]
     var symbolsByName: [String: Symbol] = [:]
     var functionsByAddress: [UInt64: Function] = [:]
+    private var analyzedFunctionsByAddress: [UInt64: Function] = [:]
 
     // MARK: - Disassembly Cache
     @Published var disassemblyCache: [UInt64: [Instruction]] = [:]
@@ -191,6 +192,7 @@ class AppState: ObservableObject {
         symbolsByAddress = [:]
         symbolsByName = [:]
         functionsByAddress = [:]
+        analyzedFunctionsByAddress = [:]
 
         // Clear user annotations
         renamedFunctions = [:]
@@ -298,6 +300,7 @@ class AppState: ObservableObject {
                 self.symbolsByAddress = symbolsByAddress
                 self.symbolsByName = symbolsByName
                 self.functionsByAddress = functionsByAddress
+                self.analyzedFunctionsByAddress = [:]
                 self.strings = strings
 
                 self.patcher = BinaryPatcher(binary: binary)
@@ -429,6 +432,7 @@ class AppState: ObservableObject {
         loadingProgress = 0.4
         self.functions = await functionAnalyzer.analyze(binary: binary, disassembler: disassembler)
         self.functionsByAddress = Dictionary(uniqueKeysWithValues: self.functions.map { ($0.startAddress, $0) })
+        self.analyzedFunctionsByAddress = self.functionsByAddress
         refreshSelectedFunctionFromAnalysis()
 
         // Find strings
@@ -460,6 +464,7 @@ class AppState: ObservableObject {
             loadingMessage = "Finding functions..."
             self.functions = await functionAnalyzer.analyze(binary: binary, disassembler: disassembler)
             self.functionsByAddress = Dictionary(uniqueKeysWithValues: self.functions.map { ($0.startAddress, $0) })
+            self.analyzedFunctionsByAddress = self.functionsByAddress
             refreshSelectedFunctionFromAnalysis()
             isLoading = false
         }
@@ -1127,7 +1132,7 @@ class AppState: ObservableObject {
     }
 
     private func selectFunction(_ function: Function, recordDecompilerHistory: Bool) {
-        let resolvedFunction = functionsByAddress[function.startAddress] ?? function
+        let resolvedFunction = analyzedFunctionsByAddress[function.startAddress] ?? functionsByAddress[function.startAddress] ?? function
 
         if recordDecompilerHistory,
            let current = selectedFunction,
@@ -1145,14 +1150,14 @@ class AppState: ObservableObject {
 
     private func refreshSelectedFunctionFromAnalysis() {
         guard let selectedFunction,
-              let updated = functionsByAddress[selectedFunction.startAddress] else {
+              let updated = analyzedFunctionsByAddress[selectedFunction.startAddress] ?? functionsByAddress[selectedFunction.startAddress] else {
             return
         }
         self.selectedFunction = updated
     }
 
     private func prepareFunctionForDecompilation(_ function: Function, binary: BinaryFile) async -> Function {
-        if let analyzed = functionsByAddress[function.startAddress],
+        if let analyzed = analyzedFunctionsByAddress[function.startAddress],
            !analyzed.basicBlocks.isEmpty {
             if selectedFunction?.startAddress == analyzed.startAddress {
                 selectedFunction = analyzed
@@ -1161,14 +1166,20 @@ class AppState: ObservableObject {
         }
 
         let analyzedFunctions = await functionAnalyzer.analyze(binary: binary, disassembler: disassembler)
-        functions = analyzedFunctions
-        functionsByAddress = Dictionary(uniqueKeysWithValues: analyzedFunctions.map { ($0.startAddress, $0) })
+        analyzedFunctionsByAddress = Dictionary(uniqueKeysWithValues: analyzedFunctions.map { ($0.startAddress, $0) })
         refreshSelectedFunctionFromAnalysis()
 
-        return functionsByAddress[function.startAddress] ?? function
+        return analyzedFunctionsByAddress[function.startAddress] ?? function
     }
 
     func resolveFunctionReference(named name: String) -> Function? {
+        if let function = analyzedFunctionsByAddress.values.first(where: {
+            let displayName = getDisplayName(forFunctionAt: $0.startAddress)
+            return displayName == name || $0.displayName == name || $0.shortDisplayName == name || $0.name == name
+        }) {
+            return function
+        }
+
         if let function = functions.first(where: {
             let displayName = getDisplayName(forFunctionAt: $0.startAddress)
             return displayName == name || $0.displayName == name || $0.shortDisplayName == name || $0.name == name
@@ -1190,6 +1201,9 @@ class AppState: ObservableObject {
     }
 
     func resolveFunction(at address: UInt64, preferredName: String? = nil) -> Function? {
+        if let function = analyzedFunctionsByAddress[address] {
+            return function
+        }
         if let function = functionsByAddress[address] {
             return function
         }
