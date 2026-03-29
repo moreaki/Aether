@@ -224,6 +224,11 @@ The built application will be available at `.build/release/Aether`.
 8. **Malware Analysis**: Use Analysis → Malware Analysis for threat assessment
 9. **Export**: Use the Export menu to save analysis in various formats
 
+## Engineering Notes
+
+- [Engineering Notes](docs/ENGINEERING_NOTES.md) - current CLI, cache, backend, and decompiler direction
+- [Build Notes](BUILD.md) - packaging, signing, notarization, and local app-bundle runs
+
 ### Keyboard Shortcuts
 
 | Action | Shortcut |
