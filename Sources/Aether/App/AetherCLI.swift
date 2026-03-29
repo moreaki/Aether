@@ -1,7 +1,7 @@
 import Foundation
 
 enum AetherCLI {
-    private static let supportedCommands: Set<String> = ["help", "analyze", "functions", "listAllFunctions", "disassemble", "decompile"]
+    private static let supportedCommands: Set<String> = ["help", "analyze", "cleanCache", "functions", "listAllFunctions", "disassemble", "decompile"]
 
     static func runIfRequested(arguments: [String] = CommandLine.arguments) -> Int32? {
         guard arguments.count > 1 else {
@@ -25,6 +25,8 @@ enum AetherCLI {
                 printHelp()
             case .analyze:
                 try analyze(invocation)
+            case .cleanCache:
+                try cleanCache(invocation)
             case .functions:
                 try listFunctions(invocation)
             case .listAllFunctions:
@@ -49,6 +51,7 @@ enum AetherCLI {
         Usage:
           Aether help
           Aether analyze <input> [--refresh] [--output <plain|json>]
+          Aether cleanCache [input] [--all] [--output <plain|json>]
           Aether functions <input> [--refresh] [--no-cache] [--output <plain|json>]
           Aether listAllFunctions <input> [--refresh] [--no-cache] [--output <plain|json>]
           Aether disassemble <input> [--function <name|address>] [--limit <count>] [--refresh] [--no-cache] [--output <plain|ansi|json>]
@@ -64,6 +67,7 @@ enum AetherCLI {
 
         Notes:
           - `analyze` performs full function analysis and stores a cache snapshot for later commands.
+          - `cleanCache` removes CLI cache entries for one input or the entire CLI cache with `--all`.
           - `decompile` still decompiles the selected function on demand.
           - Addresses may be written as `0x4f2`, `4f2`, `proc_04F2`, or `sub_401000`.
           - `--highlight` is a shortcut for `--output ansi`.
@@ -165,11 +169,38 @@ enum AetherCLI {
             print(try encodeJSON(payload))
         }
     }
+
+    private static func cleanCache(_ invocation: CLIInvocation) throws {
+        let summary: CacheCleanSummary
+        if invocation.cleanAllCaches {
+            summary = try CLIAnalysisCacheManager.clearAllCaches()
+        } else {
+            guard !invocation.inputPath.isEmpty else {
+                throw CLIError.usage("Missing input path or use --all")
+            }
+            let url = URL(fileURLWithPath: invocation.inputPath)
+            let binary = try BinaryLoader().load(from: url)
+            let cacheManager = try CLIAnalysisCacheManager(url: url, binary: binary)
+            summary = try cacheManager.clear()
+        }
+
+        switch invocation.outputFormat {
+        case .plain, .ansi:
+            if let inputPath = summary.inputPath {
+                print("Cleared \(summary.removedFiles) cache file(s) for \(inputPath)")
+            } else {
+                print("Cleared \(summary.removedFiles) cache file(s)")
+            }
+        case .json:
+            print(try encodeJSON(summary))
+        }
+    }
 }
 
 private enum CLICommand {
     case help
     case analyze
+    case cleanCache
     case functions
     case listAllFunctions
     case disassemble
@@ -198,6 +229,7 @@ private struct CLIInvocation {
     let lineNumbers: CLILineNumbers
     let useCache: Bool
     let refreshCache: Bool
+    let cleanAllCaches: Bool
 
     init(arguments: [String]) throws {
         let commandToken = arguments.count > 1 ? arguments[1] : "help"
@@ -212,9 +244,12 @@ private struct CLIInvocation {
             self.lineNumbers = .none
             self.useCache = true
             self.refreshCache = false
+            self.cleanAllCaches = false
             return
         case "analyze":
             self.command = .analyze
+        case "cleanCache":
+            self.command = .cleanCache
         case "functions":
             self.command = .functions
         case "listAllFunctions":
@@ -227,12 +262,6 @@ private struct CLIInvocation {
             throw CLIError.usage("Unknown command: \(commandToken)")
         }
 
-        guard arguments.count > 2 else {
-            throw CLIError.usage("Missing input path")
-        }
-
-        self.inputPath = arguments[2]
-
         var functionIdentifier: String?
         var limit: Int?
         var backend: String?
@@ -240,7 +269,25 @@ private struct CLIInvocation {
         var lineNumbers: CLILineNumbers = .none
         var useCache = true
         var refreshCache = false
-        var index = 3
+        var cleanAllCaches = false
+        let inputPath: String
+        var index: Int
+
+        if self.command == .cleanCache {
+            if arguments.count > 2, !arguments[2].hasPrefix("--") {
+                inputPath = arguments[2]
+                index = 3
+            } else {
+                inputPath = ""
+                index = 2
+            }
+        } else {
+            guard arguments.count > 2 else {
+                throw CLIError.usage("Missing input path")
+            }
+            inputPath = arguments[2]
+            index = 3
+        }
 
         while index < arguments.count {
             switch arguments[index] {
@@ -280,12 +327,19 @@ private struct CLIInvocation {
                 refreshCache = true
             case "--no-cache":
                 useCache = false
+            case "--all":
+                cleanAllCaches = true
             default:
                 throw CLIError.usage("Unknown option: \(arguments[index])")
             }
             index += 1
         }
 
+        if self.command == .cleanCache, inputPath.isEmpty, !cleanAllCaches {
+            throw CLIError.usage("Missing input path or use --all")
+        }
+
+        self.inputPath = inputPath
         self.functionIdentifier = functionIdentifier
         self.limit = limit
         self.backend = backend
@@ -293,6 +347,7 @@ private struct CLIInvocation {
         self.lineNumbers = lineNumbers
         self.useCache = useCache
         self.refreshCache = refreshCache
+        self.cleanAllCaches = cleanAllCaches
     }
 }
 
@@ -411,7 +466,9 @@ private final class CLIContext {
             }
 
             if let symbol = binary.symbols.first(where: {
-                $0.type == .function && ($0.displayName == identifier || $0.name == identifier)
+                $0.type == .function && symbolMatchesIdentifier($0, identifier: identifier, allowDemangledLookup: false)
+            }) ?? binary.symbols.first(where: {
+                $0.type == .function && symbolMatchesIdentifier($0, identifier: identifier, allowDemangledLookup: true)
             }),
                let matched = try analyzedFunction(at: symbol.address, preferredName: symbol.displayName) {
                 return matched
@@ -658,13 +715,13 @@ private final class CLIContext {
 
     private func defaultNativeFunction(preferredIdentifier: String?) throws -> Function? {
         if let startSymbol = binary.symbols.first(where: {
-            $0.type == .function && ($0.displayName == "start" || $0.name == "start")
+            $0.type == .function && ($0.name == "start" || $0.name == "_start")
         }) {
             return try analyzedFunction(at: startSymbol.address, preferredName: preferredIdentifier ?? startSymbol.displayName)
         }
 
         if binary.entryPoint != 0 {
-            return try analyzedFunction(at: binary.entryPoint, preferredName: preferredIdentifier ?? "start")
+            return try analyzedFunction(at: binary.entryPoint, preferredName: preferredIdentifier)
         }
 
         if let firstSymbol = binary.symbols.first(where: { $0.type == .function && $0.address != 0 }) {
@@ -672,6 +729,26 @@ private final class CLIContext {
         }
 
         return nil
+    }
+
+    private func symbolMatchesIdentifier(_ symbol: Symbol, identifier: String, allowDemangledLookup: Bool) -> Bool {
+        if symbol.name == identifier {
+            return true
+        }
+
+        if symbol.name.hasPrefix("_"), String(symbol.name.dropFirst()) == identifier {
+            return true
+        }
+
+        guard allowDemangledLookup, looksLikeDisplayNameQuery(identifier) else {
+            return false
+        }
+
+        return symbol.displayName == identifier
+    }
+
+    private func looksLikeDisplayNameQuery(_ identifier: String) -> Bool {
+        identifier.contains(".") || identifier.contains("(") || identifier.contains(" ") || identifier.contains(":")
     }
 
     private func resolveJavaFunction(identifier: String, javaClasses: [JARLoader.JavaClass]) -> Function? {
@@ -753,6 +830,47 @@ private struct CLIAnalysisCacheManager {
         let attributes = try FileManager.default.attributesOfItem(atPath: url.path)
         self.fileSize = (attributes[.size] as? NSNumber)?.uint64Value ?? UInt64(binary.fileSize)
         self.modificationTime = (attributes[.modificationDate] as? Date)?.timeIntervalSince1970 ?? 0
+    }
+
+    func clear() throws -> CacheCleanSummary {
+        let cacheRoot = Self.cacheRootURL()
+        let key = stableHash("\(url.path)|\(fileSize)|\(modificationTime)")
+        let metadataURL = cacheRoot.appendingPathComponent("\(key).json")
+        let functionDirURL = cacheRoot
+            .appendingPathComponent(key, isDirectory: true)
+            .appendingPathComponent("functions", isDirectory: true)
+
+        var removedFiles = 0
+        if FileManager.default.fileExists(atPath: metadataURL.path) {
+            try FileManager.default.removeItem(at: metadataURL)
+            removedFiles += 1
+        }
+        if FileManager.default.fileExists(atPath: functionDirURL.path) {
+            let enumerator = FileManager.default.enumerator(at: functionDirURL, includingPropertiesForKeys: nil)
+            while enumerator?.nextObject() != nil {
+                removedFiles += 1
+            }
+            try FileManager.default.removeItem(at: functionDirURL.deletingLastPathComponent())
+        }
+
+        return CacheCleanSummary(inputPath: url.path, removedFiles: removedFiles)
+    }
+
+    static func clearAllCaches() throws -> CacheCleanSummary {
+        let cacheRoot = cacheRootURL()
+        guard FileManager.default.fileExists(atPath: cacheRoot.path) else {
+            return CacheCleanSummary(inputPath: nil, removedFiles: 0)
+        }
+
+        var removedFiles = 0
+        let enumerator = FileManager.default.enumerator(at: cacheRoot, includingPropertiesForKeys: nil)
+        while enumerator?.nextObject() != nil {
+            removedFiles += 1
+        }
+        for item in try FileManager.default.contentsOfDirectory(at: cacheRoot, includingPropertiesForKeys: nil) {
+            try FileManager.default.removeItem(at: item)
+        }
+        return CacheCleanSummary(inputPath: nil, removedFiles: removedFiles)
     }
 
     func load() throws -> [Function]? {
@@ -842,20 +960,23 @@ private struct CLIAnalysisCacheManager {
     }
 
     func cacheURL() throws -> URL {
-        let cacheRoot = FileManager.default.homeDirectoryForCurrentUser
-            .appendingPathComponent("Library/Caches/Aether/cli", isDirectory: true)
+        let cacheRoot = Self.cacheRootURL()
         let key = stableHash("\(url.path)|\(fileSize)|\(modificationTime)")
         return cacheRoot.appendingPathComponent("\(key).json")
     }
 
     private func analyzedFunctionCacheURL(for address: UInt64) throws -> URL {
-        let cacheRoot = FileManager.default.homeDirectoryForCurrentUser
-            .appendingPathComponent("Library/Caches/Aether/cli", isDirectory: true)
+        let cacheRoot = Self.cacheRootURL()
         let key = stableHash("\(url.path)|\(fileSize)|\(modificationTime)")
         return cacheRoot
             .appendingPathComponent(key, isDirectory: true)
             .appendingPathComponent("functions", isDirectory: true)
             .appendingPathComponent(String(format: "%016llX.json", address))
+    }
+
+    private static func cacheRootURL() -> URL {
+        FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent("Library/Caches/Aether/cli", isDirectory: true)
     }
 
     private func stableHash(_ string: String) -> String {
@@ -1093,6 +1214,11 @@ private struct AnalysisSummary: Codable {
     let architecture: String
     let functionCount: Int
     let cachePath: String?
+}
+
+private struct CacheCleanSummary: Codable {
+    let inputPath: String?
+    let removedFiles: Int
 }
 
 private struct FunctionSummary: Codable {

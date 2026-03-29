@@ -1,5 +1,62 @@
 import Foundation
 
+private func formatCallableName(_ rawName: String) -> String {
+    var name = rawName.trimmingCharacters(in: .whitespacesAndNewlines)
+
+    if name.hasPrefix("static ") {
+        name.removeFirst("static ".count)
+    }
+
+    if let returnTypeRange = name.range(of: " -> ") {
+        name = String(name[..<returnTypeRange.lowerBound])
+    }
+
+    if let parameterListStart = name.firstIndex(of: "(") {
+        name = String(name[..<parameterListStart])
+    }
+
+    name = name.replacingOccurrences(of: ".$main", with: ".main")
+
+    if name.hasPrefix("_") && !name.hasPrefix("__") {
+        name.removeFirst()
+    }
+
+    if name.contains(where: \.isWhitespace) || name.contains(":") {
+        let phraseReplacements: [(String, String)] = [
+            ("type metadata accessor for ", "type_metadata_accessor_"),
+            ("lazy protocol witness table accessor for type ", "lazy_protocol_witness_table_accessor_"),
+            ("protocol witness table accessor for type ", "protocol_witness_table_accessor_"),
+            ("protocol witness table accessor for ", "protocol_witness_table_accessor_"),
+            ("nominal type descriptor for ", "nominal_type_descriptor_"),
+            ("value witness table for ", "value_witness_table_"),
+            ("type metadata completion function for ", "type_metadata_completion_"),
+            ("associated type witness table accessor for ", "associated_type_witness_table_accessor_"),
+            ("associated conformance witness table accessor for ", "associated_conformance_witness_table_accessor_")
+        ]
+
+        for (source, replacement) in phraseReplacements {
+            name = name.replacingOccurrences(of: source, with: replacement)
+        }
+
+        name = name
+            .replacingOccurrences(of: " and conformance ", with: "_conformance_")
+            .replacingOccurrences(of: " in ", with: "_in_")
+            .replacingOccurrences(of: " for ", with: "_")
+
+        name = String(name.map { character in
+            character.isLetter || character.isNumber || character == "_" ? character : "_"
+        })
+
+        while name.contains("__") {
+            name = name.replacingOccurrences(of: "__", with: "_")
+        }
+
+        name = name.trimmingCharacters(in: CharacterSet(charactersIn: "_"))
+    }
+
+    return name.isEmpty ? rawName : name
+}
+
 /// Enhanced pseudo-code decompiler with control flow recovery
 class Decompiler {
 
@@ -34,12 +91,10 @@ class Decompiler {
         let params = inferParameters(instructions: instructions, architecture: binary.architecture)
         let paramStr = params.isEmpty ? "void" : params.joined(separator: ", ")
 
-        if let recognized = decompileRecognizedDOSFunction(
+        if let recognized = decompileRecognizedSwiftFunction(
             function: function,
             instructions: instructions,
-            binary: binary,
-            returnType: returnType,
-            paramStr: paramStr
+            binary: binary
         ) {
             return recognized
         }
@@ -51,7 +106,7 @@ class Decompiler {
         }
         output += "\n"
 
-        output += "\(returnType) \(function.displayName)(\(paramStr))\n"
+        output += "\(returnType) \(decompilerFunctionName(function))(\(paramStr))\n"
         output += "{\n"
 
         // Generate local variable declarations
@@ -135,20 +190,11 @@ class Decompiler {
     private func refineDOSPseudoCode(_ source: String) -> String {
         var refined = source
 
-        let semanticNames: [(from: String, to: String)] = [
-            ("global_2EF3", "active_video_page"),
-            ("global_2EF4", "current_video_mode"),
-            ("global_2EF5", "screen_text_columns"),
-            ("global_3044", "display_adapter_choice"),
-            ("global_3048", "startup_delay_counter"),
-            ("byte_8F57", "menu_exit_flag")
-        ]
-
-        for replacement in semanticNames {
-            refined = refined.replacingOccurrences(of: replacement.from, with: replacement.to)
-        }
-
         let replacements: [(pattern: String, template: String)] = [
+            (
+                pattern: #"(?m)^([ \t]*)ax = (0x[0-9A-Fa-f]+|\d+);\n\1ds = ax;\n\1es = ax;"#,
+                template: "$1set_segment_registers($2);"
+            ),
             (
                 pattern: #"(?m)^([ \t]*)ax = 0x03;\n\1if \((.+?)\) \{\n\1    ax = 0x07;\n\1\}\n\1bios_set_video_mode\(al\);"#,
                 template: "$1bios_set_video_mode(($2) ? 0x07 : 0x03);"
@@ -162,8 +208,8 @@ class Decompiler {
                 template: "$1bios_get_video_state();"
             ),
             (
-                pattern: #"(?m)^([ \t]*)ah = 0x01;\n\1ch = 0x20;\n\1cl = 0x20;\n\1bios_video_interrupt\(\);"#,
-                template: "$1bios_set_cursor_shape(0x20, 0x20);"
+                pattern: #"(?m)^([ \t]*)ah = 0x01;\n\1ch = (0x[0-9A-Fa-f]+|\d+);\n\1cl = (0x[0-9A-Fa-f]+|\d+);\n\1bios_video_interrupt\(\);"#,
+                template: "$1bios_set_cursor_shape($2, $3);"
             )
         ]
 
@@ -195,201 +241,40 @@ class Decompiler {
         }
     }
 
-    private func decompileRecognizedDOSFunction(
+    private func decompileRecognizedSwiftFunction(
         function: Function,
         instructions: [Instruction],
-        binary: BinaryFile,
-        returnType: String,
-        paramStr: String
+        binary: BinaryFile
     ) -> String? {
-        guard binary.format == .dos || binary.architecture == .x86_16 else {
+        guard binary.format == .machO, binary.architecture == .arm64 else {
             return nil
         }
 
-        if isDOSMenuSelectionFunction(instructions) {
-            return decompileDOSMenuSelectionFunction(
-                function: function,
-                returnType: returnType,
-                paramStr: paramStr
-            )
+        let functionName = decompilerFunctionName(function, binary: binary)
+        guard functionName.hasSuffix(".main") else {
+            return nil
         }
 
-        if isDOSMenuRendererFunction(instructions) {
-            return decompileDOSMenuRendererFunction(
-                function: function,
-                returnType: returnType,
-                paramStr: paramStr
-            )
+        let calls = instructions.filter { $0.type == .call }
+        guard calls.count == 3,
+              let metadataTarget = calls[0].branchTarget,
+              let witnessTarget = calls[1].branchTarget,
+              let metadataName = binary.symbols.first(where: { $0.address == metadataTarget })?.displayName,
+              let witnessName = binary.symbols.first(where: { $0.address == witnessTarget })?.displayName,
+              metadataName.hasPrefix("type metadata accessor for "),
+              witnessName.hasPrefix("lazy protocol witness table accessor for type "),
+              witnessName.contains("SwiftUI.App") else {
+            return nil
         }
 
-        return nil
-    }
-
-    private func isDOSMenuSelectionFunction(_ instructions: [Instruction]) -> Bool {
-        let addresses = Set(instructions.compactMap(\.branchTarget))
-        let scanCodes: Set<String> = ["0x1c", "0x41", "0x39", "0x50", "0x4d", "0x48", "0x4b"]
-        let comparedScanCodes = Set(
-            instructions
-                .filter { $0.mnemonic.lowercased() == "cmp" }
-                .compactMap { instruction -> String? in
-                    let parts = instruction.operands
-                        .split(separator: ",")
-                        .map { $0.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() }
-                    guard parts.count == 2, parts[0] == "ah" else {
-                        return nil
-                    }
-                    return parts[1]
-                }
-        )
-
-        return scanCodes.isSubset(of: comparedScanCodes)
-            && addresses.contains(0x066E)
-            && addresses.contains(0x06FE)
-            && instructions.contains(where: { $0.mnemonic.lowercased() == "xlat" })
-    }
-
-    private func isDOSMenuRendererFunction(_ instructions: [Instruction]) -> Bool {
-        let mnemonics = instructions.map { $0.mnemonic.lowercased() }
-
-        return mnemonics.filter { $0 == "lodsb" }.count >= 2
-            && mnemonics.contains("loop")
-            && instructions.contains(where: { $0.mnemonic.lowercased() == "mov" && $0.operands.lowercased() == "si, 0x2f9a" })
-            && instructions.contains(where: { $0.mnemonic.lowercased() == "mov" && $0.operands.lowercased() == "cx, 0x06" })
-            && instructions.contains(where: { $0.mnemonic.lowercased() == "int" && $0.operands.lowercased() == "0x16" })
-    }
-
-    private func decompileDOSMenuSelectionFunction(
-        function: Function,
-        returnType: String,
-        paramStr: String
-    ) -> String {
+        let typeName = metadataName.replacingOccurrences(of: "type metadata accessor for ", with: "")
         var output = ""
         output += "// Function at \(String(format: "0x%llX", function.startAddress))\n"
         output += "// Size: \(function.size) bytes\n\n"
-        output += "\(returnType) \(function.displayName)(\(paramStr))\n"
+        output += "void \(functionName)(void)\n"
         output += "{\n"
-        output += "    menu_exit_flag = 0x00;\n"
-        output += "    proc_0000();\n"
-        output += "    ax = ds;\n"
-        output += "    es = ax;\n"
-        output += "    ax = 0x04;\n"
-        output += "    if (byte_8E59 == 0x00) {\n"
-        output += "        ax = 0x03;\n"
-        output += "        if (byte_8E5A == 0x00) {\n"
-        output += "            ax = 0x02;\n"
-        output += "            if (byte_8E58 == 0x00) {\n"
-        output += "                ax = 0x00;\n"
-        output += "                if (byte_8E5D == 0x00) {\n"
-        output += "                    ax = 0x01;\n"
-        output += "                }\n"
-        output += "            }\n"
-        output += "        }\n"
-        output += "    }\n"
-        output += "    display_adapter_choice = ax;\n"
-        output += "    bios_get_video_state();\n"
-        output += "    active_video_page = bh;\n"
-        output += "    current_video_mode = al;\n"
-        output += "    screen_text_columns = ah;\n"
-        output += "    bios_set_cursor_shape(0x20, 0x20);\n"
-        output += "\n"
-        output += "    for (;;) {\n"
-        output += "        ax = 0x0600;\n"
-        output += "        bh = 0x00;\n"
-        output += "        cx = 0x0000;\n"
-        output += "        dl = screen_text_columns;\n"
-        output += "        dl--;\n"
-        output += "        dh = 0x18;\n"
-        output += "        bios_scroll_up_window(0x00, 0x00, 0x0000, dx);\n"
-        output += "        proc_06FE();\n"
-        output += "        result = bios_read_key();\n"
-        output += "\n"
-        output += "        switch (ah) {\n"
-        output += "        case 0x1C:\n"
-        output += "            break;\n"
-        output += "        case 0x41:\n"
-        output += "            menu_exit_flag = 0xFF;\n"
-        output += "            break;\n"
-        output += "        case 0x39:\n"
-        output += "        case 0x50:\n"
-        output += "        case 0x4D:\n"
-        output += "            display_adapter_choice++;\n"
-        output += "            if (display_adapter_choice >= 0x06) {\n"
-        output += "                display_adapter_choice = 0x00;\n"
-        output += "            }\n"
-        output += "            continue;\n"
-        output += "        case 0x48:\n"
-        output += "        case 0x4B:\n"
-        output += "            display_adapter_choice--;\n"
-        output += "            if ((int16_t)display_adapter_choice < 0) {\n"
-        output += "                display_adapter_choice = 0x05;\n"
-        output += "            }\n"
-        output += "            continue;\n"
-        output += "        default:\n"
-        output += "            continue;\n"
-        output += "        }\n"
-        output += "\n"
-        output += "        if (display_adapter_choice == 0x05) {\n"
-        output += "            proc_066E();\n"
-        output += "            continue;\n"
-        output += "        }\n"
-        output += "\n"
-        output += "        ax = display_adapter_choice;\n"
-        output += "        bx = 0x2EF8;\n"
-        output += "        // xlat maps the selected menu entry to the final adapter mode.\n"
-        output += "        xlat();\n"
-        output += "        display_adapter_choice = ax;\n"
-        output += "        return ax;\n"
-        output += "    }\n"
-        output += "}\n"
-        return output
-    }
-
-    private func decompileDOSMenuRendererFunction(
-        function: Function,
-        returnType: String,
-        paramStr: String
-    ) -> String {
-        var output = ""
-        output += "// Function at \(String(format: "0x%llX", function.startAddress))\n"
-        output += "// Size: \(function.size) bytes\n\n"
-        output += "\(returnType) \(function.displayName)(\(paramStr))\n"
-        output += "{\n"
-        output += "    ax = 0x0600;\n"
-        output += "    bh = 0x00;\n"
-        output += "    cx = 0x0000;\n"
-        output += "    dl = screen_text_columns;\n"
-        output += "    dl--;\n"
-        output += "    dh = 0x18;\n"
-        output += "    bios_scroll_up_window(0x00, 0x00, 0x0000, dx);\n"
-        output += "    si = 0x2F9A;\n"
-        output += "\n"
-        output += "    for (cx = 0x06; cx != 0; --cx) {\n"
-        output += "        push(cx);\n"
-        output += "        dl = 0x00;\n"
-        output += "        dh = load_byte_and_advance(ds, &si);\n"
-        output += "        bios_set_cursor_position(active_video_page, dh, dl);\n"
-        output += "        bios_write_char_attr(0x20, active_video_page, 0x07, 0x01);\n"
-        output += "        while ((al = load_byte_and_advance(ds, &si)) != 0x00) {\n"
-        output += "            bios_teletype_output(al);\n"
-        output += "        }\n"
-        output += "        result = bios_read_key();\n"
-        output += "        *((uint8_t*)MK_FP(ds, si)) = ah;\n"
-        output += "        si++;\n"
-        output += "        ah ^= 0x80;\n"
-        output += "        *((uint8_t*)MK_FP(ds, si)) = ah;\n"
-        output += "        si++;\n"
-        output += "        if (al < 0x20) {\n"
-        output += "            push(ax);\n"
-        output += "            bios_write_char_attr(0x20, active_video_page, 0x07, 0x01);\n"
-        output += "            bios_teletype_output(al + 0x41);\n"
-        output += "            ax = pop();\n"
-        output += "        }\n"
-        output += "        push(ax);\n"
-        output += "        bios_write_char_attr(0x20, active_video_page, 0x07, 0x01);\n"
-        output += "        ax = pop();\n"
-        output += "        bios_teletype_output(al);\n"
-        output += "        cx = pop();\n"
-        output += "    }\n"
+        output += "    SwiftUI.App.main(\(typeName).self);\n"
+        output += "    return;\n"
         output += "}\n"
         return output
     }
@@ -418,6 +303,10 @@ class Decompiler {
     // MARK: - Type Inference
 
     private func inferReturnType(instructions: [Instruction], architecture: Architecture) -> String {
+        if dosInterruptCalls.values.contains(where: { $0.name == "dos_exit" || $0.name == "dos_terminate" }) {
+            return "void"
+        }
+
         for insn in instructions.reversed() {
             if insn.type == .return {
                 continue
@@ -784,7 +673,7 @@ class Decompiler {
         if let target = insn.branchTarget {
             // Look up function name from symbols
             if let symbol = binary.symbols.first(where: { $0.address == target }) {
-                funcName = symbol.displayName
+                funcName = sanitizeCallableName(symbol.displayName)
             } else {
                 funcName = autogeneratedFunctionName(at: target, architecture: binary.architecture, format: binary.format)
             }
@@ -802,6 +691,18 @@ class Decompiler {
         }
 
         return args.isEmpty ? "\(funcName)();" : "\(funcName)(\(args));"
+    }
+
+    private func decompilerFunctionName(_ function: Function, binary: BinaryFile? = nil) -> String {
+        let resolvedBinary = binary ?? self.binary
+        if let symbol = resolvedBinary?.symbols.first(where: { $0.address == function.startAddress }) {
+            return sanitizeCallableName(symbol.displayName)
+        }
+        return sanitizeCallableName(function.displayName)
+    }
+
+    private func sanitizeCallableName(_ rawName: String) -> String {
+        formatCallableName(rawName)
     }
 
     private func findStringArgument(near address: UInt64, binary: BinaryFile) -> String? {
@@ -1303,31 +1204,7 @@ class Decompiler {
     }
 
     private func semanticDOSGlobalName(segment: String?, address: UInt64) -> String? {
-        guard isDOSLikeBinary else {
-            return nil
-        }
-
-        let normalizedSegment = (segment ?? "ds").lowercased()
-        guard normalizedSegment == "ds" else {
-            return nil
-        }
-
-        switch address {
-        case 0x2EF3:
-            return "active_video_page"
-        case 0x2EF4:
-            return "current_video_mode"
-        case 0x2EF5:
-            return "screen_text_columns"
-        case 0x3044:
-            return "display_adapter_choice"
-        case 0x3048:
-            return "startup_delay_counter"
-        case 0x8F57:
-            return "menu_exit_flag"
-        default:
-            return nil
-        }
+        nil
     }
 
     private func inferredMemoryOperand(_ operand: String, using counterpart: String) -> String {
@@ -1758,7 +1635,7 @@ class EnhancedCodePrinter {
 
         if let target = insn.branchTarget {
             if let sym = binary?.symbols.first(where: { $0.address == target }) {
-                funcName = sym.displayName
+                funcName = callableName(sym.displayName)
             } else {
                 let architecture = binary?.architecture ?? .unknown
                 let format = binary?.format ?? .unknown
@@ -1767,6 +1644,10 @@ class EnhancedCodePrinter {
         }
 
         return "\(funcName)();"
+    }
+
+    private func callableName(_ rawName: String) -> String {
+        formatCallableName(rawName)
     }
 
     private func autogeneratedFunctionName(at address: UInt64, architecture: Architecture, format: BinaryFormat) -> String {
@@ -2014,31 +1895,7 @@ class EnhancedCodePrinter {
     }
 
     private func semanticDOSGlobalName(segment: String?, address: UInt64) -> String? {
-        guard isDOSLikeBinary else {
-            return nil
-        }
-
-        let normalizedSegment = (segment ?? "ds").lowercased()
-        guard normalizedSegment == "ds" else {
-            return nil
-        }
-
-        switch address {
-        case 0x2EF3:
-            return "active_video_page"
-        case 0x2EF4:
-            return "current_video_mode"
-        case 0x2EF5:
-            return "screen_text_columns"
-        case 0x3044:
-            return "display_adapter_choice"
-        case 0x3048:
-            return "startup_delay_counter"
-        case 0x8F57:
-            return "menu_exit_flag"
-        default:
-            return nil
-        }
+        nil
     }
 
     private func parseAddress(_ str: String) -> UInt64? {

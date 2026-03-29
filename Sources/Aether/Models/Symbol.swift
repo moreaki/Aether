@@ -1,5 +1,105 @@
 import Foundation
 
+private enum SymbolNameFormatter {
+    private static let lock = NSLock()
+    private static var swiftCache: [String: String] = [:]
+    private static var cppCache: [String: String] = [:]
+    private static let swiftDemanglePath = resolveSwiftDemanglePath()
+    private static let cppFiltPaths = ["/usr/bin/c++filt", "/opt/homebrew/bin/c++filt", "/usr/local/bin/c++filt"]
+
+    static func displayName(for rawName: String) -> String {
+        if rawName.hasPrefix("_$s") || rawName.hasPrefix("$s") {
+            return demangleSwift(rawName) ?? rawName
+        }
+        if rawName.hasPrefix("__Z") || rawName.hasPrefix("_Z") {
+            return demangleCPP(rawName) ?? rawName
+        }
+        return rawName.hasPrefix("_") ? String(rawName.dropFirst()) : rawName
+    }
+
+    private static func demangleSwift(_ mangled: String) -> String? {
+        withCachedValue(for: mangled, cache: &swiftCache) {
+            guard let swiftDemanglePath else {
+                return nil
+            }
+            return runTool(path: swiftDemanglePath, arguments: ["-compact", mangled])
+        }
+    }
+
+    private static func demangleCPP(_ mangled: String) -> String? {
+        withCachedValue(for: mangled, cache: &cppCache) {
+            for path in cppFiltPaths where FileManager.default.isExecutableFile(atPath: path) {
+                if let result = runTool(path: path, arguments: [mangled]) {
+                    return result
+                }
+            }
+            return nil
+        }
+    }
+
+    private static func withCachedValue(
+        for key: String,
+        cache: inout [String: String],
+        producer: () -> String?
+    ) -> String? {
+        lock.lock()
+        if let cached = cache[key] {
+            lock.unlock()
+            return cached
+        }
+        lock.unlock()
+
+        guard let value = producer(), !value.isEmpty, value != key else {
+            return nil
+        }
+
+        lock.lock()
+        cache[key] = value
+        lock.unlock()
+        return value
+    }
+
+    private static func resolveSwiftDemanglePath() -> String? {
+        let candidates = [
+            "/usr/bin/swift-demangle",
+            "/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/swift-demangle"
+        ]
+
+        for path in candidates where FileManager.default.isExecutableFile(atPath: path) {
+            return path
+        }
+
+        return runTool(path: "/usr/bin/xcrun", arguments: ["--find", "swift-demangle"])
+    }
+
+    private static func runTool(path: String, arguments: [String]) -> String? {
+        guard FileManager.default.isExecutableFile(atPath: path) else {
+            return nil
+        }
+
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: path)
+        process.arguments = arguments
+
+        let pipe = Pipe()
+        process.standardOutput = pipe
+        process.standardError = FileHandle.nullDevice
+
+        do {
+            try process.run()
+            process.waitUntilExit()
+
+            let data = pipe.fileHandleForReading.readDataToEndOfFile()
+            let result = String(data: data, encoding: .utf8)?
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+
+            return result?.isEmpty == false ? result : nil
+        } catch {
+            return nil
+        }
+    }
+}
+
 /// Represents a symbol in the binary
 struct Symbol: Identifiable, Hashable {
     let id = UUID()
@@ -23,27 +123,7 @@ struct Symbol: Identifiable, Hashable {
     }
 
     var displayName: String {
-        // Demangle if needed
-        if name.hasPrefix("_$s") || name.hasPrefix("$s") {
-            return demangleSwift(name) ?? name
-        } else if name.hasPrefix("__Z") || name.hasPrefix("_Z") {
-            return demangleCPP(name) ?? name
-        }
-        return name.hasPrefix("_") ? String(name.dropFirst()) : name
-    }
-
-    /// Basic Swift demangling (simplified)
-    private func demangleSwift(_ mangled: String) -> String? {
-        // Use swift-demangle if available, otherwise return nil
-        // This is a placeholder - real implementation would call swift-demangle
-        return nil
-    }
-
-    /// Basic C++ demangling (simplified)
-    private func demangleCPP(_ mangled: String) -> String? {
-        // Use c++filt if available, otherwise return nil
-        // This is a placeholder - real implementation would call c++filt
-        return nil
+        SymbolNameFormatter.displayName(for: name)
     }
 }
 
