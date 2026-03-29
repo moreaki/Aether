@@ -300,6 +300,14 @@ class CapstoneDisassembler {
             if lower.hasSuffix("x") || lower.hasSuffix("i") || lower.hasSuffix("p") { return 2 }
             if lower.hasSuffix("l") || lower.hasSuffix("h") { return 1 }
             return 8
+        case .x86_16:
+            if lower.hasSuffix("x") || lower.hasSuffix("i") || lower.hasSuffix("p") {
+                return 2
+            }
+            if lower.hasSuffix("l") || lower.hasSuffix("h") {
+                return 1
+            }
+            return 2
         case .arm64, .arm64e:
             if lower.hasPrefix("x") || lower == "sp" { return 8 }
             if lower.hasPrefix("w") { return 4 }

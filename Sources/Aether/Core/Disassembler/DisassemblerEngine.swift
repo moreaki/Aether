@@ -3,6 +3,7 @@ import Foundation
 /// Main disassembly engine
 /// Uses Capstone when available, falls back to native implementation
 actor DisassemblerEngine {
+    private let zydisDisassembler = ZydisDisassembler()
 
     // MARK: - Disassembly
 
@@ -14,11 +15,13 @@ actor DisassemblerEngine {
     ) async -> [Instruction] {
         switch architecture {
         case .x86_64:
-            return disassembleX86_64(data: data, address: address)
+            return zydisDisassembler.disassemble(data: data, address: address, architecture: architecture)
+        case .x86_16:
+            return zydisDisassembler.disassemble(data: data, address: address, architecture: architecture)
         case .arm64, .arm64e:
             return disassembleARM64(data: data, address: address)
         case .i386:
-            return disassembleX86(data: data, address: address)
+            return zydisDisassembler.disassemble(data: data, address: address, architecture: architecture)
         case .armv7:
             return disassembleARM(data: data, address: address)
         case .jvm:

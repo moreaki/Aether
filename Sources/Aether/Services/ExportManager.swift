@@ -602,6 +602,7 @@ class ExportManager {
     private func r2Architecture(_ arch: Architecture) -> String {
         switch arch {
         case .x86_64: return "x86"
+        case .x86_16: return "x86"
         case .i386: return "x86"
         case .arm64, .arm64e: return "arm"
         case .armv7: return "arm"

@@ -98,7 +98,7 @@ final class DOSLoader: BinaryLoaderProtocol {
         return BinaryFile(
             url: url,
             format: .dos,
-            architecture: .i386,
+            architecture: .x86_16,
             endianness: .little,
             is64Bit: false,
             fileSize: data.count,

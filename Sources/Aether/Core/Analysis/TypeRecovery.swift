@@ -186,12 +186,14 @@ class TypeRecoveryEngine {
     private var typeEvidence: [String: TypeEvidence] = [:]  // Register/variable -> evidence
     private var memoryTypes: [Int64: RecoveredType] = [:]   // Stack offset -> type
     private var recoveredStructs: [String: StructType] = [:]
+    private var currentArchitecture: Architecture = .unknown
 
     /// Recover types for a function
     func recoverTypes(function: Function, binary: BinaryFile, dataFlow: AdvancedDataFlowAnalyzer.DataFlowResult) -> FunctionTypeInfo {
         // Reset state
         typeEvidence = [:]
         memoryTypes = [:]
+        currentArchitecture = binary.architecture
 
         // Analyze all instructions
         let instructions = function.basicBlocks.flatMap { $0.instructions }
@@ -341,7 +343,7 @@ class TypeRecoveryEngine {
 
         // Return value hints
         let returnReg = architecture.returnValueRegister
-        addEvidence(for: returnReg, size: 8)  // Assume 64-bit return
+        addEvidence(for: returnReg, size: scalarSize(for: architecture))
     }
 
     // MARK: - Evidence Collection
@@ -436,7 +438,7 @@ class TypeRecoveryEngine {
 
         // Check for pointer
         if evidence.pointerOperations > 2 {
-            return .pointer(to: .unknown(size: 8))
+            return .pointer(to: .unknown(size: currentArchitecture.pointerSize))
         }
 
         // Determine size
@@ -507,7 +509,7 @@ class TypeRecoveryEngine {
                 if let evidence = typeEvidence[returnReg] {
                     return inferType(from: evidence)
                 }
-                return .int64
+                return signedIntegerType(forSize: scalarSize(for: architecture))
             }
             break
         }
@@ -630,6 +632,29 @@ class TypeRecoveryEngine {
         case 2: return .uint16
         case 4: return .uint32
         case 8: return .uint64
+        default: return .unknown(size: size)
+        }
+    }
+
+    private func scalarSize(for architecture: Architecture) -> Int {
+        switch architecture {
+        case .x86_16:
+            return 2
+        case .i386, .armv7, .jvm:
+            return 4
+        case .x86_64, .arm64, .arm64e:
+            return 8
+        case .unknown:
+            return 4
+        }
+    }
+
+    private func signedIntegerType(forSize size: Int) -> RecoveredType {
+        switch size {
+        case 1: return .int8
+        case 2: return .int16
+        case 4: return .int32
+        case 8: return .int64
         default: return .unknown(size: size)
         }
     }

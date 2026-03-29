@@ -22,7 +22,7 @@ struct DisassemblyView: View {
                     .font(.headline)
 
                 if appState.currentFile?.format == .dos {
-                    Text("DOS 16-bit analysis is partial")
+                    Text("DOS 16-bit decode enabled; analysis is experimental")
                         .font(.caption)
                         .foregroundColor(.orange)
                 }

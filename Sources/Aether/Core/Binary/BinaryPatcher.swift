@@ -99,7 +99,7 @@ class BinaryPatcher {
         let nopByte: UInt8
 
         switch binary.architecture {
-        case .x86_64, .i386:
+        case .x86_64, .x86_16, .i386:
             nopByte = 0x90
         case .arm64, .arm64e:
             // ARM64 NOP is 4 bytes: 0x1F, 0x20, 0x03, 0xD5
@@ -150,6 +150,16 @@ class BinaryPatcher {
                 }
                 bytes += [0xFF, 0xE0]  // JMP RAX
             }
+
+        case .x86_16:
+            let offset = Int64(target) - Int64(source) - 3
+            guard offset >= Int16.min && offset <= Int16.max else {
+                throw PatchError.writeError("16-bit jump target out of range")
+            }
+            bytes = [0xE9]
+            let rel16 = Int16(offset)
+            bytes.append(UInt8(truncatingIfNeeded: rel16))
+            bytes.append(UInt8(truncatingIfNeeded: rel16 >> 8))
 
         case .arm64, .arm64e:
             // B imm26

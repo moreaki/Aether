@@ -3,6 +3,7 @@ import Foundation
 /// Supported CPU architectures
 enum Architecture: String, CaseIterable, Identifiable, Codable {
     case x86_64 = "x86_64"
+    case x86_16 = "x86_16"
     case arm64 = "ARM64"
     case arm64e = "ARM64e"
     case i386 = "i386"
@@ -15,7 +16,7 @@ enum Architecture: String, CaseIterable, Identifiable, Codable {
     /// Instruction alignment in bytes
     var instructionAlignment: Int {
         switch self {
-        case .x86_64, .i386:
+        case .x86_64, .x86_16, .i386:
             return 1  // Variable length instructions
         case .arm64, .arm64e:
             return 4  // Fixed 4-byte instructions
@@ -33,6 +34,8 @@ enum Architecture: String, CaseIterable, Identifiable, Codable {
         switch self {
         case .x86_64, .arm64, .arm64e:
             return 8
+        case .x86_16:
+            return 2
         case .i386, .armv7:
             return 4
         case .jvm:
@@ -47,6 +50,8 @@ enum Architecture: String, CaseIterable, Identifiable, Codable {
         switch self {
         case .x86_64:
             return "rsp"
+        case .x86_16:
+            return "sp"
         case .i386:
             return "esp"
         case .arm64, .arm64e:
@@ -65,6 +70,8 @@ enum Architecture: String, CaseIterable, Identifiable, Codable {
         switch self {
         case .x86_64:
             return "rbp"
+        case .x86_16:
+            return "bp"
         case .i386:
             return "ebp"
         case .arm64, .arm64e:
@@ -81,7 +88,7 @@ enum Architecture: String, CaseIterable, Identifiable, Codable {
     /// Return address register/location
     var returnAddressLocation: String {
         switch self {
-        case .x86_64, .i386:
+        case .x86_64, .x86_16, .i386:
             return "[stack]"
         case .arm64, .arm64e:
             return "x30"
@@ -99,7 +106,7 @@ enum Architecture: String, CaseIterable, Identifiable, Codable {
         switch self {
         case .x86_64, .arm64, .arm64e:
             return true
-        case .i386, .armv7, .jvm, .unknown:
+        case .x86_16, .i386, .armv7, .jvm, .unknown:
             return false
         }
     }
@@ -110,6 +117,8 @@ enum Architecture: String, CaseIterable, Identifiable, Codable {
         case .x86_64:
             return ["rax", "rbx", "rcx", "rdx", "rsi", "rdi", "rbp", "rsp",
                     "r8", "r9", "r10", "r11", "r12", "r13", "r14", "r15"]
+        case .x86_16:
+            return ["ax", "bx", "cx", "dx", "si", "di", "bp", "sp"]
         case .i386:
             return ["eax", "ebx", "ecx", "edx", "esi", "edi", "ebp", "esp"]
         case .arm64, .arm64e:
@@ -128,6 +137,8 @@ enum Architecture: String, CaseIterable, Identifiable, Codable {
         switch self {
         case .x86_64:
             return ["rdi", "rsi", "rdx", "rcx", "r8", "r9"]  // System V AMD64 ABI
+        case .x86_16:
+            return []  // Arguments on stack / calling-convention specific
         case .i386:
             return []  // Arguments on stack
         case .arm64, .arm64e:
@@ -146,6 +157,8 @@ enum Architecture: String, CaseIterable, Identifiable, Codable {
         switch self {
         case .x86_64:
             return "rax"
+        case .x86_16:
+            return "ax"
         case .i386:
             return "eax"
         case .arm64, .arm64e:
