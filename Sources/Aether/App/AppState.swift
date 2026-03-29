@@ -19,6 +19,7 @@ class AppState: ObservableObject {
     @Published var selectedAddress: UInt64 = 0
     @Published var selectedFunction: Function?
     @Published var selectedSection: Section?
+    @Published var decompilerJumpHistory: [UInt64] = []
 
     // MARK: - UI State
     @Published var showCFG = false
@@ -173,6 +174,7 @@ class AppState: ObservableObject {
         selectedSection = nil
         selectedFunction = nil
         selectedAddress = 0
+        decompilerJumpHistory = []
         functions = []
         strings = []
         decompilerOutput = ""
@@ -427,6 +429,7 @@ class AppState: ObservableObject {
         loadingProgress = 0.4
         self.functions = await functionAnalyzer.analyze(binary: binary, disassembler: disassembler)
         self.functionsByAddress = Dictionary(uniqueKeysWithValues: self.functions.map { ($0.startAddress, $0) })
+        refreshSelectedFunctionFromAnalysis()
 
         // Find strings
         loadingMessage = "Extracting strings..."
@@ -457,6 +460,7 @@ class AppState: ObservableObject {
             loadingMessage = "Finding functions..."
             self.functions = await functionAnalyzer.analyze(binary: binary, disassembler: disassembler)
             self.functionsByAddress = Dictionary(uniqueKeysWithValues: self.functions.map { ($0.startAddress, $0) })
+            refreshSelectedFunctionFromAnalysis()
             isLoading = false
         }
     }
@@ -774,6 +778,8 @@ class AppState: ObservableObject {
         // Find function containing this address
         if let func_ = functions.first(where: { $0.contains(address: address) }) {
             selectedFunction = func_
+        } else if let resolvedFunction = resolveFunction(at: address) {
+            selectedFunction = resolvedFunction
         }
 
         // Set address after a short delay so the view has time to load data
@@ -783,13 +789,37 @@ class AppState: ObservableObject {
     }
 
     func selectFunction(_ function: Function) {
-        selectedFunction = function
-        selectedAddress = function.startAddress
+        selectFunction(function, recordDecompilerHistory: false)
+    }
 
-        // Decompile if decompiler view is visible
-        if showDecompiler {
-            decompileCurrentFunction()
+    func jumpToFunction(_ function: Function) {
+        selectFunction(function, recordDecompilerHistory: true)
+    }
+
+    var canNavigateDecompilerBack: Bool {
+        !decompilerJumpHistory.isEmpty
+    }
+
+    var decompilerJumpHistoryItems: [Function] {
+        decompilerJumpHistory.reversed().compactMap { resolveFunction(at: $0) }
+    }
+
+    func navigateDecompilerBack() {
+        guard let address = decompilerJumpHistory.popLast(),
+              let function = resolveFunction(at: address) else {
+            return
         }
+        selectFunction(function, recordDecompilerHistory: false)
+    }
+
+    func navigateDecompilerHistory(to address: UInt64) {
+        guard let index = decompilerJumpHistory.lastIndex(of: address),
+              let function = resolveFunction(at: address) else {
+            return
+        }
+
+        decompilerJumpHistory.removeSubrange(index...)
+        selectFunction(function, recordDecompilerHistory: false)
     }
 
     // MARK: - Decompilation
@@ -867,13 +897,18 @@ class AppState: ObservableObject {
             return
         }
 
-        if selectedBinaryDecompilerBackend == .radare2,
-           Radare2Decompiler.findExecutablePath() != nil {
-            decompileWithRadare2(function: function, binary: binary)
-            return
-        }
+        Task {
+            let preparedFunction = await prepareFunctionForDecompilation(function, binary: binary)
+            guard self.selectedFunction?.startAddress == function.startAddress else { return }
 
-        decompileNativeFunction(function: function, binary: binary)
+            if self.selectedBinaryDecompilerBackend == .radare2,
+               Radare2Decompiler.findExecutablePath() != nil {
+                self.decompileWithRadare2(function: preparedFunction, binary: binary)
+                return
+            }
+
+            self.decompileNativeFunction(function: preparedFunction, binary: binary)
+        }
     }
 
     private func decompileNativeFunction(
@@ -1088,6 +1123,149 @@ class AppState: ObservableObject {
             return "Internal"
         case .vineflower:
             return "Vineflower"
+        }
+    }
+
+    private func selectFunction(_ function: Function, recordDecompilerHistory: Bool) {
+        let resolvedFunction = functionsByAddress[function.startAddress] ?? function
+
+        if recordDecompilerHistory,
+           let current = selectedFunction,
+           current.startAddress != resolvedFunction.startAddress {
+            decompilerJumpHistory.append(current.startAddress)
+        }
+
+        selectedFunction = resolvedFunction
+        selectedAddress = resolvedFunction.startAddress
+
+        if showDecompiler {
+            decompileCurrentFunction()
+        }
+    }
+
+    private func refreshSelectedFunctionFromAnalysis() {
+        guard let selectedFunction,
+              let updated = functionsByAddress[selectedFunction.startAddress] else {
+            return
+        }
+        self.selectedFunction = updated
+    }
+
+    private func prepareFunctionForDecompilation(_ function: Function, binary: BinaryFile) async -> Function {
+        if let analyzed = functionsByAddress[function.startAddress],
+           !analyzed.basicBlocks.isEmpty {
+            if selectedFunction?.startAddress == analyzed.startAddress {
+                selectedFunction = analyzed
+            }
+            return analyzed
+        }
+
+        let analyzedFunctions = await functionAnalyzer.analyze(binary: binary, disassembler: disassembler)
+        functions = analyzedFunctions
+        functionsByAddress = Dictionary(uniqueKeysWithValues: analyzedFunctions.map { ($0.startAddress, $0) })
+        refreshSelectedFunctionFromAnalysis()
+
+        return functionsByAddress[function.startAddress] ?? function
+    }
+
+    func resolveFunctionReference(named name: String) -> Function? {
+        if let function = functions.first(where: {
+            let displayName = getDisplayName(forFunctionAt: $0.startAddress)
+            return displayName == name || $0.displayName == name || $0.shortDisplayName == name || $0.name == name
+        }) {
+            return function
+        }
+
+        if let symbol = currentFile?.symbols.first(where: {
+            $0.type == .function && ($0.displayName == name || $0.name == name)
+        }) {
+            return resolveFunction(at: symbol.address, preferredName: symbol.displayName)
+        }
+
+        if let address = parseAutogeneratedFunctionAddress(from: name) {
+            return resolveFunction(at: address, preferredName: name)
+        }
+
+        return nil
+    }
+
+    func resolveFunction(at address: UInt64, preferredName: String? = nil) -> Function? {
+        if let function = functionsByAddress[address] {
+            return function
+        }
+
+        guard let binary = currentFile,
+              binary.sections.contains(where: { $0.contains(address: address) }) else {
+            return nil
+        }
+
+        let functionName: String
+        if let preferredName, !preferredName.isEmpty {
+            functionName = preferredName
+        } else if let symbol = symbolsByAddress[address] {
+            functionName = symbol.displayName
+        } else if binary.format == .dos || binary.architecture == .x86_16 {
+            functionName = String(format: "proc_%04llX", address)
+        } else {
+            functionName = String(format: "sub_%llX", address)
+        }
+
+        return Function(
+            name: functionName,
+            startAddress: address,
+            endAddress: inferredFunctionEnd(startingAt: address, binary: binary)
+        )
+    }
+
+    private func parseAutogeneratedFunctionAddress(from name: String) -> UInt64? {
+        let patterns = ["proc_", "sub_", "fcn.", "loc_"]
+        for prefix in patterns where name.lowercased().hasPrefix(prefix) {
+            let value = String(name.dropFirst(prefix.count))
+            return UInt64(value, radix: 16)
+        }
+        return nil
+    }
+
+    private func inferredFunctionEnd(startingAt address: UInt64, binary: BinaryFile) -> UInt64 {
+        guard let section = binary.sections.first(where: { $0.contains(address: address) }) else {
+            return address + 256
+        }
+
+        let nextKnownAddress = (
+            functions.map(\.startAddress) +
+            binary.symbols.filter { $0.type == .function && $0.address > address }.map(\.address)
+        )
+        .filter { $0 > address }
+        .min()
+
+        let sectionEnd = section.address + section.size
+        let defaultEnd = min(address + 0x200, sectionEnd)
+        return min(nextKnownAddress ?? defaultEnd, sectionEnd)
+    }
+
+    private func tailExtensionBudget(for binary: BinaryFile) -> Int {
+        if binary.format == .dos || binary.architecture == .x86_16 {
+            return 64
+        }
+        return 0
+    }
+
+    private func tailNeedsExtension(_ instruction: Instruction?, binary: BinaryFile) -> Bool {
+        guard binary.format == .dos || binary.architecture == .x86_16,
+              let instruction else {
+            return false
+        }
+
+        guard instruction.mnemonic.lowercased() == "db",
+              let opcode = instruction.bytes.first else {
+            return false
+        }
+
+        switch opcode {
+        case 0x9A, 0xE8, 0xE9, 0xEA, 0xEB, 0xFF:
+            return true
+        default:
+            return false
         }
     }
 
@@ -1669,13 +1847,26 @@ class AppState: ObservableObject {
             return []
         }
 
-        let data = section.data[offset..<(offset + size)]
+        let hardEndOffset = min(section.data.count, offset + size + tailExtensionBudget(for: binary))
+        var endOffset = offset + size
+        var instructions: [Instruction] = []
 
-        return await disassembler.disassemble(
-            data: Data(data),
-            address: function.startAddress,
-            architecture: binary.architecture
-        )
+        repeat {
+            let data = section.data[offset..<endOffset]
+            instructions = await disassembler.disassemble(
+                data: Data(data),
+                address: function.startAddress,
+                architecture: binary.architecture
+            )
+
+            if !tailNeedsExtension(instructions.last, binary: binary) || endOffset >= hardEndOffset {
+                break
+            }
+
+            endOffset = min(endOffset + 16, hardEndOffset)
+        } while true
+
+        return instructions
     }
 
     func disassembleRange(start: UInt64, end: UInt64) async -> [Instruction] {

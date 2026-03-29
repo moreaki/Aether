@@ -501,7 +501,9 @@ class ControlFlowStructurer {
             let condition = extractCondition(from: header)
 
             // Try to find initialization (predecessor of header outside loop)
-            let initBlock = header.predecessors.first { !loopBlocks.contains($0) }.flatMap { blocks[$0] }
+            let initBlock = backEdge.from == header.startAddress
+                ? nil
+                : header.predecessors.first { !loopBlocks.contains($0) }.flatMap { blocks[$0] }
             let initStruct: ControlStructure? = initBlock.map { structureBlock($0) }
 
             // Update is in the latch block

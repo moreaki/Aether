@@ -1177,7 +1177,7 @@ class EnhancedCodePrinter {
         case .forLoop(let initStmt, let condition, let update, let body):
             let initStr = initStmt.map { printInline($0) } ?? ""
             let condStr = formatCondition(condition)
-            let updateStr = update.map { printInline($0) } ?? ""
+            let updateStr = update.map { printInline($0) } ?? inferredCountedLoopUpdate(for: condition)
 
             var result = indent() + "for (\(initStr); \(condStr); \(updateStr)) {\n"
             indentLevel += 1
@@ -1562,6 +1562,19 @@ class EnhancedCodePrinter {
         return ""
     }
 
+    private func inferredCountedLoopUpdate(for condition: ControlFlowStructurer.Condition) -> String {
+        switch condition.leftOperand.lowercased() {
+        case "cx" where condition.rightOperand == "0":
+            return "--cx"
+        case "ecx" where condition.rightOperand == "0":
+            return "--ecx"
+        case "rcx" where condition.rightOperand == "0":
+            return "--rcx"
+        default:
+            return ""
+        }
+    }
+
     private func normalizeMemoryOperand(_ operand: String) -> (sizeQualifier: String?, segmentOverride: String?, inner: String) {
         var op = operand.trimmingCharacters(in: .whitespacesAndNewlines)
         let lowercase = op.lowercased()
@@ -1739,7 +1752,7 @@ class EnhancedCodePrinter {
         if repeated {
             return "\(accumulator) = load_sequence(ds, si, \(countRegister()));"
         }
-        return "\(accumulator) = load_\(elementSuffix(for: mnemonic).dropLast())(ds, si);"
+        return "\(accumulator) = load_\(elementSuffix(for: mnemonic).dropLast())_and_advance(ds, &si);"
     }
 
     private func stringScanCall(mnemonic: String, repeated: Bool) -> String {

@@ -39,6 +39,29 @@ struct DecompilerView: View {
                 }
                 Spacer()
 
+                if appState.canNavigateDecompilerBack {
+                    Button {
+                        appState.navigateDecompilerBack()
+                    } label: {
+                        Label("Back", systemImage: "arrow.uturn.backward")
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+                    .help("Jump back to the previous decompiler function")
+
+                    Menu {
+                        ForEach(appState.decompilerJumpHistoryItems, id: \.startAddress) { function in
+                            Button(function.displayName) {
+                                appState.navigateDecompilerHistory(to: function.startAddress)
+                            }
+                        }
+                    } label: {
+                        Label("History", systemImage: "clock.arrow.circlepath")
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+                }
+
                 if appState.isCurrentFileJava {
                     Button("Switch to \(appState.nextJavaDecompilerBackendName)") {
                         appState.switchToNextJavaDecompilerBackend()
@@ -545,7 +568,7 @@ private struct JumpToFunctionButton: View {
 
     var body: some View {
         Button {
-            appState.selectFunction(function)
+            appState.jumpToFunction(function)
         } label: {
             Label("Jump", systemImage: "arrow.up.forward.square")
                 .font(.system(size: 11, weight: .semibold))
@@ -623,10 +646,7 @@ private func referencedFunction(in line: String, appState: AppState) -> Function
             continue
         }
 
-        if let function = appState.functions.first(where: {
-            let displayName = appState.getDisplayName(forFunctionAt: $0.startAddress)
-            return displayName == candidate || $0.displayName == candidate || $0.shortDisplayName == candidate
-        }) {
+        if let function = appState.resolveFunctionReference(named: candidate) {
             if function.startAddress == appState.selectedFunction?.startAddress {
                 continue
             }
