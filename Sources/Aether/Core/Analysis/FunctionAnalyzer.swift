@@ -156,7 +156,7 @@ class FunctionAnalyzer {
             binary: binary
         )
         if refinedEnd > function.startAddress {
-            function.endAddress = max(function.endAddress, refinedEnd)
+            function.endAddress = refinedEnd
         }
 
         function.basicBlocks = await buildBasicBlocks(
