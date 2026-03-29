@@ -147,6 +147,10 @@ struct HexRow: View {
 
     private var rowData: [UInt8] {
         let start = rowIndex * bytesPerRow
+        guard start >= 0 && start < data.count else {
+            return []
+        }
+
         let end = min(start + bytesPerRow, data.count)
         return Array(data[start..<end])
     }
@@ -158,6 +162,8 @@ struct HexRow: View {
     }
 
     var body: some View {
+        let rowData = rowData
+
         HStack(spacing: 0) {
             // Address
             Text(String(format: "%08llX", rowAddress))
