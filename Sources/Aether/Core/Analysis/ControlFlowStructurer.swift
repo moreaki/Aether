@@ -137,6 +137,8 @@ class ControlFlowStructurer {
             return .sequence([])
         }
 
+        resetAnalysisState()
+
         // Build block lookup
         blocks = Dictionary(uniqueKeysWithValues: function.basicBlocks.map { ($0.startAddress, $0) })
 
@@ -152,6 +154,14 @@ class ControlFlowStructurer {
         // Structure the CFG
         let entryAddr = function.basicBlocks.first!.startAddress
         return structureRegion(entry: entryAddr, exits: [], visited: [])
+    }
+
+    private func resetAnalysisState() {
+        blocks = [:]
+        dominators = [:]
+        postDominators = [:]
+        loopHeaders = []
+        backEdges = []
     }
 
     // MARK: - Dominator Analysis
@@ -248,6 +258,15 @@ class ControlFlowStructurer {
 
     /// Identify the type of loop at a header
     private func identifyLoopType(header: BasicBlock, backEdgeSource: UInt64) -> Region.LoopType {
+        if backEdgeSource == header.startAddress, let latchInstruction = header.instructions.last {
+            switch latchInstruction.mnemonic.lowercased() {
+            case "loop", "loope", "loopz", "loopne", "loopnz":
+                return .counted
+            default:
+                return .postTest
+            }
+        }
+
         // Pre-test (while): condition at header
         if header.type == .conditional {
             return .preTest
@@ -274,6 +293,10 @@ class ControlFlowStructurer {
     // MARK: - Structure Recovery
 
     private func structureRegion(entry: UInt64, exits: Set<UInt64>, visited: Set<UInt64>) -> ControlStructure {
+        if exits.contains(entry) {
+            return .sequence([])
+        }
+
         guard let block = blocks[entry], !visited.contains(entry) else {
             return .goto(entry)
         }
@@ -292,12 +315,15 @@ class ControlFlowStructurer {
             return structureBlock(block)
 
         case .conditional:
-            return structureConditional(block: block, visited: newVisited)
+            return structureConditional(block: block, exits: exits, visited: newVisited)
 
         case .normal, .entry, .loop:
             // Check for sequence
             if block.successors.count == 1, let succAddr = block.successors.first {
                 let blockStruct = structureBlock(block)
+                if exits.contains(succAddr) {
+                    return blockStruct
+                }
                 let succStruct = structureRegion(entry: succAddr, exits: exits, visited: newVisited)
                 return .sequence([blockStruct, succStruct])
             } else if block.successors.isEmpty {
@@ -322,7 +348,7 @@ class ControlFlowStructurer {
         return .block(block)
     }
 
-    private func structureConditional(block: BasicBlock, visited: Set<UInt64>) -> ControlStructure {
+    private func structureConditional(block: BasicBlock, exits: Set<UInt64>, visited: Set<UInt64>) -> ControlStructure {
         guard block.successors.count == 2 else {
             return structureBlock(block)
         }
@@ -333,12 +359,22 @@ class ControlFlowStructurer {
         let falseTarget = block.successors[0] // Fall through
 
         // Find the join point (immediate post-dominator)
-        let joinPoint = findJoinPoint(block: block)
+        let joinPoint = findJoinPoint(block: block, excluding: exits)
+
+        if exits.contains(falseTarget) && !exits.contains(trueTarget) {
+            let thenBody = structureRegion(entry: trueTarget, exits: exits, visited: visited)
+            return .sequence([structureBlock(block), .ifThen(condition: condition, body: thenBody)])
+        }
+
+        if exits.contains(trueTarget) && !exits.contains(falseTarget) {
+            let thenBody = structureRegion(entry: falseTarget, exits: exits, visited: visited)
+            return .sequence([structureBlock(block), .ifThen(condition: condition.negated, body: thenBody)])
+        }
 
         // Check if one branch leads directly to join point (if-then)
         if let jp = joinPoint, falseTarget == jp {
             let thenBody = structureRegion(entry: trueTarget, exits: [jp], visited: visited)
-            let continuation = blocks[jp].map { structureRegion(entry: $0.startAddress, exits: [], visited: visited) }
+            let continuation = structureContinuation(at: jp, visited: visited)
 
             let ifStruct = ControlStructure.ifThen(condition: condition, body: thenBody)
 
@@ -350,7 +386,7 @@ class ControlFlowStructurer {
 
         if let jp = joinPoint, trueTarget == jp {
             let elseBody = structureRegion(entry: falseTarget, exits: [jp], visited: visited)
-            let continuation = blocks[jp].map { structureRegion(entry: $0.startAddress, exits: [], visited: visited) }
+            let continuation = structureContinuation(at: jp, visited: visited)
 
             let ifStruct = ControlStructure.ifThen(condition: condition.negated, body: elseBody)
 
@@ -440,7 +476,12 @@ class ControlFlowStructurer {
             let condition = extractCondition(from: latchBlock)
 
             // Structure body
-            let body = structureLoopBody(entry: header.startAddress, loopBlocks: loopBlocks.subtracting([backEdge.from]), visited: visited)
+            let body: ControlStructure
+            if backEdge.from == header.startAddress {
+                body = loopBodyFromSingleBlock(header)
+            } else {
+                body = structureLoopBody(entry: header.startAddress, loopBlocks: loopBlocks.subtracting([backEdge.from]), visited: visited)
+            }
 
             let doWhileStruct = ControlStructure.doWhileLoop(body: body, condition: condition)
 
@@ -464,7 +505,7 @@ class ControlFlowStructurer {
             let initStruct: ControlStructure? = initBlock.map { structureBlock($0) }
 
             // Update is in the latch block
-            let updateBlock = blocks[backEdge.from]
+            let updateBlock = backEdge.from == header.startAddress ? nil : blocks[backEdge.from]
             let updateStruct: ControlStructure? = updateBlock.map { structureBlock($0) }
 
             // Body is everything else in the loop
@@ -475,7 +516,9 @@ class ControlFlowStructurer {
             let bodyEntry = header.successors.first { bodyBlocks.contains($0) }
             let body: ControlStructure
 
-            if let entry = bodyEntry {
+            if backEdge.from == header.startAddress {
+                body = loopBodyFromSingleBlock(header)
+            } else if let entry = bodyEntry {
                 var bodyVisited = visited
                 bodyVisited.insert(header.startAddress)
                 bodyVisited.insert(backEdge.from)
@@ -565,12 +608,29 @@ class ControlFlowStructurer {
 
     // MARK: - Helper Methods
 
-    private func findJoinPoint(block: BasicBlock) -> UInt64? {
+    private func findJoinPoint(block: BasicBlock, excluding exits: Set<UInt64>) -> UInt64? {
         guard let postDom = postDominators[block.startAddress] else { return nil }
 
-        // Immediate post-dominator is the smallest post-dominator that's not the block itself
-        let candidates = postDom.filter { $0 != block.startAddress }
-        return candidates.min()
+        let candidates = postDom.filter { $0 != block.startAddress && !exits.contains($0) }
+        guard !candidates.isEmpty else { return nil }
+
+        for candidate in candidates {
+            let isImmediate = candidates.allSatisfy { other in
+                other == candidate || (postDominators[candidate]?.contains(other) ?? false)
+            }
+            if isImmediate {
+                return candidate
+            }
+        }
+
+        return nil
+    }
+
+    private func structureContinuation(at address: UInt64, visited: Set<UInt64>) -> ControlStructure? {
+        guard blocks[address] != nil, !visited.contains(address) else {
+            return nil
+        }
+        return structureRegion(entry: address, exits: [], visited: visited)
     }
 
     private func findLoopBlocks(header: UInt64, backEdgeSource: UInt64) -> Set<UInt64> {
@@ -716,6 +776,23 @@ class ControlFlowStructurer {
         default:
             return "cx"
         }
+    }
+
+    private func loopBodyFromSingleBlock(_ block: BasicBlock) -> ControlStructure {
+        var bodyBlock = block
+        if !bodyBlock.instructions.isEmpty {
+            bodyBlock.instructions.removeLast()
+            if let lastInstruction = bodyBlock.instructions.last {
+                bodyBlock.endAddress = lastInstruction.address + UInt64(lastInstruction.size)
+            } else {
+                bodyBlock.endAddress = bodyBlock.startAddress
+            }
+        }
+        bodyBlock.successors = []
+        bodyBlock.predecessors = []
+        bodyBlock.type = .normal
+
+        return .block(bodyBlock)
     }
 }
 
