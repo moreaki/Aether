@@ -68,7 +68,9 @@
 "settings.tab.general" = "General";
 "settings.tab.appearance" = "Apariencia";
 "settings.tab.analysis" = "Análisis";
+"settings.tab.decompiler" = "Decompilador";
 "settings.tab.ai" = "IA";
+"settings.tab.java" = "Java";
 "settings.general.language" = "Idioma";
 "settings.language.system" = "Sistema";
 "settings.language.english" = "Inglés";
@@ -85,6 +87,19 @@
 "settings.analysis.analyzeStrings" = "Analizar cadenas";
 "settings.analysis.analyzeXrefs" = "Analizar referencias cruzadas";
 
+"settings.decompiler.title" = "Decompilador";
+"settings.decompiler.subtitle" = "Configura la visualización de la salida del decompilador";
+"settings.decompiler.syntaxEngine" = "Motor de resaltado de sintaxis";
+"settings.decompiler.syntax.internal" = "Interno";
+"settings.decompiler.syntax.highlightswift" = "HighlightSwift";
+"settings.decompiler.lineNumbers" = "Numeración de líneas";
+"settings.decompiler.lineNumbers.allOutput" = "Toda la salida";
+"settings.decompiler.lineNumbers.functionOnly" = "Solo función";
+"settings.decompiler.info.internal" = "El motor interno usa coloreado de tokens integrado";
+"settings.decompiler.info.highlightswift" = "HighlightSwift usa coloreado de sintaxis basado en highlight.js";
+"settings.decompiler.info.lineNumbers" = "Elige si la numeración incluye también las líneas de metadatos del encabezado";
+"settings.decompiler.info.headerToggle" = "Puedes cambiar de motor al instante desde la cabecera del decompilador";
+
 "settings.ai.title" = "Análisis de seguridad con IA";
 "settings.ai.subtitle" = "Analiza código en busca de vulnerabilidades con IA";
 "settings.ai.active" = "Activo";
@@ -99,6 +114,20 @@
 "settings.ai.info.credits" = "Usa tus créditos de API";
 "settings.ai.error.invalidFormat" = "Formato inválido";
 "settings.ai.error.saveFailed" = "Error al guardar";
+
+"settings.java.title" = "Decompilador Java";
+"settings.java.subtitle" = "Elige qué backend usar para decompilar JAR/class";
+"settings.java.backend" = "Backend";
+"settings.java.backend.internal" = "Interno";
+"settings.java.backend.vineflower" = "Vineflower";
+"settings.java.vineflowerStatus" = "Disponibilidad de Vineflower";
+"settings.java.vineflowerFound" = "Script de Vineflower detectado";
+"settings.java.vineflowerMissing" = "Script de Vineflower no encontrado";
+"settings.java.vineflowerHint" = "Se espera en $HOMEBREW_PREFIX/bin/vineflower (o /opt/homebrew/bin/vineflower, /usr/local/bin/vineflower).";
+"settings.java.refresh" = "Actualizar";
+"settings.java.info.internal" = "El backend interno decompila solo el método seleccionado";
+"settings.java.info.vineflower" = "El backend Vineflower decompila desde el .jar/.class original";
+"settings.java.info.fallback" = "Si Vineflower no está disponible o falla, se usa automáticamente el backend interno";
 
 "welcome.title" = "Aether";
 "welcome.subtitle" = "Arrastra y suelta un binario aquí\no usa Archivo → Abrir binario (⌘O)";

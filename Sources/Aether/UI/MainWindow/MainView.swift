@@ -201,8 +201,9 @@ struct WelcomeView: View {
 
             HStack(spacing: 16) {
                 FormatBadge(name: "Mach-O", icon: "apple.logo")
-                FormatBadge(name: "ELF", icon: "penguin")
-                FormatBadge(name: "PE", icon: "window.badge.plus")
+                FormatBadge(name: "ELF", icon: "terminal.fill")
+                FormatBadge(name: "PE", icon: "desktopcomputer")
+                FormatBadge(name: "Java", icon: "cup.and.saucer.fill")
             }
             .padding(.top)
         }

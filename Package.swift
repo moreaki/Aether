@@ -10,11 +10,15 @@ let package = Package(
     products: [
         .executable(name: "Aether", targets: ["Aether"])
     ],
-    dependencies: [],
+    dependencies: [
+        .package(url: "https://github.com/appstefan/highlightswift.git", exact: "1.0.5")
+    ],
     targets: [
         .executableTarget(
             name: "Aether",
-            dependencies: [],
+            dependencies: [
+                .product(name: "HighlightSwift", package: "highlightswift")
+            ],
             path: "Sources/Aether",
             resources: [
                 .process("Resources")

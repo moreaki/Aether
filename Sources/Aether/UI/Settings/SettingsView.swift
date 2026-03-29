@@ -1,6 +1,181 @@
 import SwiftUI
 import Security
 
+struct DecompilerSettingsTab: View {
+    @AppStorage(SyntaxHighlightEngine.userDefaultsKey) private var syntaxEngine = SyntaxHighlightEngine.internalEngine.rawValue
+    @AppStorage(DecompilerLineNumberingMode.userDefaultsKey) private var lineNumberingMode = DecompilerLineNumberingMode.allOutput.rawValue
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            HStack {
+                Image(systemName: "highlighter")
+                    .font(.title2)
+                    .foregroundColor(.blue)
+                VStack(alignment: .leading) {
+                    Text(translate("settings.decompiler.title"))
+                        .font(.headline)
+                    Text(translate("settings.decompiler.subtitle"))
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                }
+                Spacer()
+            }
+
+            Divider()
+
+            VStack(alignment: .leading, spacing: 8) {
+                Text(translate("settings.decompiler.syntaxEngine"))
+                    .font(.subheadline)
+                    .fontWeight(.medium)
+
+                Picker("", selection: $syntaxEngine) {
+                    Text(translate("settings.decompiler.syntax.internal"))
+                        .tag(SyntaxHighlightEngine.internalEngine.rawValue)
+                    Text(translate("settings.decompiler.syntax.highlightswift"))
+                        .tag(SyntaxHighlightEngine.highlightSwift.rawValue)
+                }
+                .labelsHidden()
+                .pickerStyle(.segmented)
+            }
+
+            VStack(alignment: .leading, spacing: 8) {
+                Text(translate("settings.decompiler.lineNumbers"))
+                    .font(.subheadline)
+                    .fontWeight(.medium)
+
+                Picker("", selection: $lineNumberingMode) {
+                    Text(translate("settings.decompiler.lineNumbers.allOutput"))
+                        .tag(DecompilerLineNumberingMode.allOutput.rawValue)
+                    Text(translate("settings.decompiler.lineNumbers.functionOnly"))
+                        .tag(DecompilerLineNumberingMode.functionOnly.rawValue)
+                }
+                .labelsHidden()
+                .pickerStyle(.segmented)
+            }
+
+            Divider()
+
+            VStack(alignment: .leading, spacing: 6) {
+                Label(translate("settings.decompiler.info.internal"), systemImage: "hammer")
+                    .font(.caption)
+                Label(translate("settings.decompiler.info.highlightswift"), systemImage: "paintbrush.pointed")
+                    .font(.caption)
+                Label(translate("settings.decompiler.info.lineNumbers"), systemImage: "list.number")
+                    .font(.caption)
+                Label(translate("settings.decompiler.info.headerToggle"), systemImage: "arrow.left.arrow.right")
+                    .font(.caption)
+            }
+            .foregroundColor(.secondary)
+
+            Spacer()
+        }
+        .padding()
+    }
+}
+
+struct JavaDecompilerSettingsTab: View {
+    @AppStorage(JavaDecompilerBackend.userDefaultsKey) private var selectedBackend = JavaDecompilerBackend.internalEngine.rawValue
+    @State private var vineflowerPath: String?
+
+    private var resolvedBackend: JavaDecompilerBackend {
+        JavaDecompilerBackend(rawValue: selectedBackend) ?? .internalEngine
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            HStack {
+                Image(systemName: "cup.and.saucer.fill")
+                    .font(.title2)
+                    .foregroundColor(.orange)
+                VStack(alignment: .leading) {
+                    Text(translate("settings.java.title"))
+                        .font(.headline)
+                    Text(translate("settings.java.subtitle"))
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                }
+                Spacer()
+            }
+
+            Divider()
+
+            VStack(alignment: .leading, spacing: 8) {
+                Text(translate("settings.java.backend"))
+                    .font(.subheadline)
+                    .fontWeight(.medium)
+
+                Picker("", selection: $selectedBackend) {
+                    Text(translate("settings.java.backend.internal"))
+                        .tag(JavaDecompilerBackend.internalEngine.rawValue)
+
+                    if vineflowerPath != nil {
+                        Text(translate("settings.java.backend.vineflower"))
+                            .tag(JavaDecompilerBackend.vineflower.rawValue)
+                    }
+                }
+                .labelsHidden()
+                .pickerStyle(.segmented)
+            }
+
+            VStack(alignment: .leading, spacing: 8) {
+                HStack {
+                    Text(translate("settings.java.vineflowerStatus"))
+                        .font(.subheadline)
+                        .fontWeight(.medium)
+                    Spacer()
+                    Button(translate("settings.java.refresh")) {
+                        refreshVineflowerStatus()
+                    }
+                }
+
+                if let vineflowerPath {
+                    Label(translate("settings.java.vineflowerFound"), systemImage: "checkmark.circle.fill")
+                        .foregroundColor(.green)
+                        .font(.caption)
+                    Text(vineflowerPath)
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                        .textSelection(.enabled)
+                } else {
+                    Label(translate("settings.java.vineflowerMissing"), systemImage: "xmark.circle.fill")
+                        .foregroundColor(.red)
+                        .font(.caption)
+                    Text(translate("settings.java.vineflowerHint"))
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                }
+            }
+
+            Divider()
+
+            VStack(alignment: .leading, spacing: 6) {
+                Label(translate("settings.java.info.internal"), systemImage: "swift")
+                    .font(.caption)
+                Label(translate("settings.java.info.vineflower"), systemImage: "terminal")
+                    .font(.caption)
+                if resolvedBackend == .vineflower && vineflowerPath == nil {
+                    Label(translate("settings.java.info.fallback"), systemImage: "arrow.uturn.backward.circle")
+                        .font(.caption)
+                }
+            }
+            .foregroundColor(.secondary)
+
+            Spacer()
+        }
+        .padding()
+        .onAppear {
+            refreshVineflowerStatus()
+        }
+    }
+
+    private func refreshVineflowerStatus() {
+        vineflowerPath = VineflowerDecompiler.findExecutablePath()
+        if vineflowerPath == nil && resolvedBackend == .vineflower {
+            selectedBackend = JavaDecompilerBackend.internalEngine.rawValue
+        }
+    }
+}
+
 struct AISettingsTab: View {
     @AppStorage("aiAPIKeyConfigured") private var apiKeyConfigured = false
     @State private var apiKey = ""

@@ -1,9 +1,25 @@
 import SwiftUI
+import HighlightSwift
 
 struct DecompilerView: View {
     @EnvironmentObject var appState: AppState
     @AppStorage("fontSize") private var fontSize = 13.0
     @AppStorage("fontName") private var fontName = "SF Mono"
+    @AppStorage(SyntaxHighlightEngine.userDefaultsKey) private var syntaxHighlightEngine = SyntaxHighlightEngine.internalEngine.rawValue
+    @AppStorage(DecompilerLineNumberingMode.userDefaultsKey) private var lineNumberingMode = DecompilerLineNumberingMode.allOutput.rawValue
+    @State private var showEngineErrorDetails = false
+
+    private var selectedSyntaxHighlightEngine: SyntaxHighlightEngine {
+        SyntaxHighlightEngine(rawValue: syntaxHighlightEngine) ?? .internalEngine
+    }
+
+    private var selectedLineNumberingMode: DecompilerLineNumberingMode {
+        DecompilerLineNumberingMode(rawValue: lineNumberingMode) ?? .allOutput
+    }
+
+    private var nextSyntaxHighlightEngine: SyntaxHighlightEngine {
+        selectedSyntaxHighlightEngine == .internalEngine ? .highlightSwift : .internalEngine
+    }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -13,8 +29,38 @@ struct DecompilerView: View {
                     .foregroundColor(.accent)
                 Text("Decompiler")
                     .font(.headline)
+                Text("Backend: \(appState.activeDecompilerBackendName)")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
                 Spacer()
 
+                if appState.isCurrentFileJava {
+                    Button("Switch to \(appState.nextJavaDecompilerBackendName)") {
+                        appState.switchToNextJavaDecompilerBackend()
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+                    .disabled(!appState.canSwitchToNextJavaDecompilerBackend)
+                    .help(appState.canSwitchToNextJavaDecompilerBackend ? "Switch Java decompiler backend" : "Alternative backend is unavailable")
+                }
+
+                Button("Syntax: \(selectedSyntaxHighlightEngine.displayName)") {
+                    syntaxHighlightEngine = nextSyntaxHighlightEngine.rawValue
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+                .help("Switch syntax highlighter to \(nextSyntaxHighlightEngine.displayName)")
+
+                if appState.decompilerEngineError != nil {
+                    Button {
+                        showEngineErrorDetails = true
+                    } label: {
+                        Image(systemName: "exclamationmark.triangle.fill")
+                            .foregroundColor(.orange)
+                    }
+                    .buttonStyle(.plain)
+                    .help("Show decompiler engine error")
+                }
                 if appState.selectedFunction != nil {
                     Button {
                         copyToClipboard()
@@ -47,23 +93,222 @@ struct DecompilerView: View {
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
-                ScrollView {
-                    SyntaxHighlightedCode(
-                        code: appState.decompilerOutput,
-                        fontSize: fontSize,
-                        fontName: fontName
-                    )
-                    .padding(12)
-                    .frame(maxWidth: .infinity, alignment: .leading)
+                GeometryReader { proxy in
+                    ScrollView([.vertical, .horizontal]) {
+                        Group {
+                            if selectedSyntaxHighlightEngine == .highlightSwift {
+                                HighlightSwiftCodeView(
+                                    code: appState.decompilerOutput,
+                                    fontSize: fontSize,
+                                    language: appState.isCurrentFileJava ? "java" : nil,
+                                    lineNumberingMode: selectedLineNumberingMode
+                                )
+                            } else {
+                                SyntaxHighlightedCode(
+                                    code: appState.decompilerOutput,
+                                    fontSize: fontSize,
+                                    fontName: fontName,
+                                    isJavaStyle: appState.isCurrentFileJava,
+                                    lineNumberingMode: selectedLineNumberingMode
+                                )
+                            }
+                        }
+                        .padding(12)
+                        .frame(
+                            minWidth: proxy.size.width,
+                            minHeight: proxy.size.height,
+                            alignment: .topLeading
+                        )
+                    }
                 }
             }
         }
         .background(Color.background)
+        .sheet(isPresented: $showEngineErrorDetails) {
+            DecompilerEngineErrorView(
+                errorText: appState.decompilerEngineError ?? "No decompiler engine error available."
+            )
+        }
     }
 
     private func copyToClipboard() {
         NSPasteboard.general.clearContents()
         NSPasteboard.general.setString(appState.decompilerOutput, forType: .string)
+    }
+}
+
+struct HighlightSwiftCodeView: View {
+    let code: String
+    let fontSize: Double
+    let language: String?
+    let lineNumberingMode: DecompilerLineNumberingMode
+    @Environment(\.colorScheme) private var colorScheme
+    @State private var highlightedLines: [AttributedString] = []
+
+    private var plainLines: [String] {
+        normalizedLines(from: code)
+    }
+
+    private var displayLines: [AttributedString] {
+        if highlightedLines.isEmpty {
+            return plainLines.map(AttributedString.init)
+        }
+        return highlightedLines
+    }
+
+    private var displayPlainLines: [String] {
+        displayLines.map { String($0.characters) }
+    }
+
+    private var firstCodeLineIndex: Int? {
+        firstFunctionContentLineIndex(in: displayPlainLines)
+    }
+
+    private var numberedLineCount: Int {
+        switch lineNumberingMode {
+        case .allOutput:
+            return displayLines.count
+        case .functionOnly:
+            guard let firstCodeLineIndex else { return 0 }
+            return max(displayLines.count - firstCodeLineIndex, 0)
+        }
+    }
+
+    private var lineNumberColumnWidth: CGFloat {
+        let count = max(numberedLineCount, 1)
+        let digits = max(String(count).count, 2)
+        return CGFloat(digits) * (fontSize * 0.65) + 8
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            ForEach(Array(displayLines.enumerated()), id: \.offset) { index, line in
+                HStack(alignment: .firstTextBaseline, spacing: 0) {
+                    Text(displayLineNumber(index: index))
+                        .font(.system(size: fontSize, design: .monospaced))
+                        .monospacedDigit()
+                        .foregroundColor(.secondary)
+                        .frame(width: lineNumberColumnWidth, alignment: .trailing)
+                        .padding(.trailing, 12)
+                        .textSelection(.disabled)
+
+                    Text(line)
+                        .font(.system(size: fontSize, design: .monospaced))
+                        .fixedSize(horizontal: true, vertical: false)
+                        .textSelection(.enabled)
+                }
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .task(id: highlightTaskID) {
+            await highlightCode()
+        }
+    }
+
+    private var highlightTaskID: String {
+        "\(code)|\(language ?? "auto")|\(colorScheme == .dark ? "dark" : "light")"
+    }
+
+    @MainActor
+    private func highlightCode() async {
+        guard !code.isEmpty else {
+            highlightedLines = [AttributedString("")]
+            return
+        }
+
+        do {
+            let style = HighlightStyle(name: .xcode, colorScheme: colorScheme)
+            let result = try await Highlight.text(
+                code,
+                language: language,
+                style: style
+            )
+            highlightedLines = splitAttributedLines(result.attributed)
+        } catch {
+            highlightedLines = plainLines.map(AttributedString.init)
+        }
+    }
+
+    private func splitAttributedLines(_ attributed: AttributedString) -> [AttributedString] {
+        let nsAttributed = NSAttributedString(attributed)
+        let text = nsAttributed.string as NSString
+
+        if text.length == 0 {
+            return [AttributedString("")]
+        }
+
+        var lines: [AttributedString] = []
+        var lineStart = 0
+
+        for index in 0..<text.length where text.character(at: index) == 10 {
+            let range = NSRange(location: lineStart, length: index - lineStart)
+            lines.append(AttributedString(nsAttributed.attributedSubstring(from: range)))
+            lineStart = index + 1
+        }
+
+        if lineStart <= text.length {
+            let range = NSRange(location: lineStart, length: text.length - lineStart)
+            lines.append(AttributedString(nsAttributed.attributedSubstring(from: range)))
+        }
+
+        if lines.last == AttributedString(""), text.hasSuffix("\n") {
+            lines.removeLast()
+        }
+
+        return lines.isEmpty ? [AttributedString("")] : lines
+    }
+
+    private func displayLineNumber(index: Int) -> String {
+        lineNumberString(
+            for: index,
+            mode: lineNumberingMode,
+            firstContentLine: firstCodeLineIndex
+        )
+    }
+}
+
+struct DecompilerEngineErrorView: View {
+    let errorText: String
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack {
+                Label("Decompiler Engine Error", systemImage: "exclamationmark.triangle.fill")
+                    .font(.headline)
+                    .foregroundColor(.orange)
+                Spacer()
+            }
+
+            ScrollView {
+                Text(errorText)
+                    .font(.system(.body, design: .monospaced))
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .textSelection(.enabled)
+            }
+            .padding(10)
+            .background(
+                RoundedRectangle(cornerRadius: 8)
+                    .fill(Color.sidebar)
+            )
+
+            HStack {
+                Button("Copy") {
+                    NSPasteboard.general.clearContents()
+                    NSPasteboard.general.setString(errorText, forType: .string)
+                }
+                .buttonStyle(.bordered)
+
+                Spacer()
+
+                Button("Close") {
+                    dismiss()
+                }
+                .buttonStyle(.borderedProminent)
+            }
+        }
+        .padding(16)
+        .frame(minWidth: 680, minHeight: 380)
     }
 }
 
@@ -73,16 +318,43 @@ struct SyntaxHighlightedCode: View {
     let code: String
     let fontSize: Double
     let fontName: String
+    let isJavaStyle: Bool
+    let lineNumberingMode: DecompilerLineNumberingMode
+
+    private var lines: [String] {
+        normalizedLines(from: code)
+    }
+
+    private var firstCodeLineIndex: Int? {
+        firstFunctionContentLineIndex(in: lines)
+    }
+
+    private var numberedLineCount: Int {
+        switch lineNumberingMode {
+        case .allOutput:
+            return lines.count
+        case .functionOnly:
+            guard let firstCodeLineIndex else { return 0 }
+            return max(lines.count - firstCodeLineIndex, 0)
+        }
+    }
+
+    private var lineNumberColumnWidth: CGFloat {
+        let count = max(numberedLineCount, 1)
+        let digits = max(String(count).count, 2)
+        return CGFloat(digits) * (fontSize * 0.65) + 8
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            ForEach(Array(code.split(separator: "\n", omittingEmptySubsequences: false).enumerated()), id: \.offset) { index, line in
-                HStack(alignment: .top, spacing: 0) {
+            ForEach(Array(lines.enumerated()), id: \.offset) { index, line in
+                HStack(alignment: .firstTextBaseline, spacing: 0) {
                     // Line number
-                    Text("\(index + 1)")
-                        .font(.system(size: fontSize - 2, design: .monospaced))
+                    Text(displayLineNumber(index: index))
+                        .font(.system(size: fontSize, design: .monospaced))
+                        .monospacedDigit()
                         .foregroundColor(.secondary)
-                        .frame(width: 40, alignment: .trailing)
+                        .frame(width: lineNumberColumnWidth, alignment: .trailing)
                         .padding(.trailing, 12)
 
                     // Code line
@@ -95,13 +367,35 @@ struct SyntaxHighlightedCode: View {
     private func highlightedLine(_ line: String) -> some View {
         var attributedParts: [(String, Color)] = []
 
-        // Simple tokenizer for C-like syntax
-        let keywords = Set(["if", "else", "while", "for", "return", "void", "int", "char",
-                           "long", "short", "unsigned", "signed", "const", "static",
-                           "struct", "enum", "typedef", "goto", "break", "continue"])
-        let types = Set(["int", "void", "char", "long", "short", "unsigned", "signed",
-                        "uint8_t", "uint16_t", "uint32_t", "uint64_t",
-                        "int8_t", "int16_t", "int32_t", "int64_t"])
+        // Simple tokenizer for C-like and Java-like syntax
+        let baseKeywords = Set([
+            "if", "else", "while", "for", "return", "break", "continue", "switch", "case", "default"
+        ])
+        let cKeywords = Set([
+            "void", "int", "char", "long", "short", "unsigned", "signed", "const",
+            "static", "struct", "enum", "typedef", "goto"
+        ])
+        let javaKeywords = Set([
+            "package", "import", "class", "interface", "enum", "extends", "implements",
+            "public", "private", "protected", "static", "final", "abstract", "native",
+            "synchronized", "transient", "volatile", "strictfp", "new", "this", "super",
+            "throws", "throw", "try", "catch", "finally", "instanceof", "assert",
+            "record", "sealed", "permits", "var", "true", "false", "null"
+        ])
+
+        let cTypes = Set([
+            "int", "void", "char", "long", "short", "unsigned", "signed",
+            "uint8_t", "uint16_t", "uint32_t", "uint64_t",
+            "int8_t", "int16_t", "int32_t", "int64_t"
+        ])
+        let javaTypes = Set([
+            "boolean", "byte", "short", "int", "long", "float", "double", "char", "void",
+            "String", "Object", "Integer", "Long", "Double", "Boolean", "Character",
+            "List", "Set", "Map", "Optional", "Class"
+        ])
+
+        let keywords = isJavaStyle ? baseKeywords.union(javaKeywords) : baseKeywords.union(cKeywords)
+        let types = isJavaStyle ? javaTypes : cTypes
 
         var remaining = line[...]
 
@@ -121,6 +415,18 @@ struct SyntaxHighlightedCode: View {
             if remaining.hasPrefix("//") {
                 attributedParts.append((String(remaining), .commentColor))
                 break
+            }
+
+            // Java annotation
+            if remaining.hasPrefix("@") {
+                var annotation = "@"
+                remaining = remaining.dropFirst()
+                while let char = remaining.first, char.isLetter || char.isNumber || char == "_" || char == "." {
+                    annotation.append(char)
+                    remaining = remaining.dropFirst()
+                }
+                attributedParts.append((annotation, .accent))
+                continue
             }
 
             // String literal
@@ -193,6 +499,55 @@ struct SyntaxHighlightedCode: View {
                     .foregroundColor(part.1)
             }
         }
+        .fixedSize(horizontal: true, vertical: false)
+    }
+
+    private func displayLineNumber(index: Int) -> String {
+        lineNumberString(
+            for: index,
+            mode: lineNumberingMode,
+            firstContentLine: firstCodeLineIndex
+        )
+    }
+}
+
+private func normalizedLines(from code: String) -> [String] {
+    let splitLines = code.split(separator: "\n", omittingEmptySubsequences: false).map(String.init)
+    guard !splitLines.isEmpty else {
+        return [""]
+    }
+
+    if splitLines.last == "", code.hasSuffix("\n") {
+        return Array(splitLines.dropLast())
+    }
+
+    return splitLines
+}
+
+private func firstFunctionContentLineIndex(in lines: [String]) -> Int? {
+    for (index, line) in lines.enumerated() {
+        let trimmed = line.trimmingCharacters(in: .whitespaces)
+        if trimmed.isEmpty || trimmed.hasPrefix("//") {
+            continue
+        }
+        return index
+    }
+    return nil
+}
+
+private func lineNumberString(
+    for index: Int,
+    mode: DecompilerLineNumberingMode,
+    firstContentLine: Int?
+) -> String {
+    switch mode {
+    case .allOutput:
+        return "\(index + 1)"
+    case .functionOnly:
+        guard let firstContentLine, index >= firstContentLine else {
+            return ""
+        }
+        return "\(index - firstContentLine + 1)"
     }
 }
 

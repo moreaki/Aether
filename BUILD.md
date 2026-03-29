@@ -29,6 +29,24 @@ Notarization is Apple scanning your signed app/archive for malicious content. If
 3. Installed `Developer ID Application` certificate in your keychain
 4. `xcrun notarytool` credentials stored in keychain (profile name)
 
+## Full Xcode Toolchain (for SwiftUI macro packages)
+
+Some Swift packages (for example `HighlightSwift >= 1.1.0`) use SwiftUI macro plugins like
+`@Entry` and `#Preview`. These may fail to compile if your active developer directory points to
+Command Line Tools only (`/Library/Developer/CommandLineTools`).
+
+To make the environment ready:
+
+1. Install full Xcode (App Store or Apple Developer download)
+2. Switch active developer directory:
+   `sudo xcode-select -s /Applications/Xcode.app/Contents/Developer`
+3. Run first-launch setup:
+   `sudo xcodebuild -runFirstLaunch`
+4. Accept Xcode license:
+   `sudo xcodebuild -license accept`
+5. Verify toolchain:
+   `xcode-select -p && xcodebuild -version && swift --version`
+
 ## Apple ID, Team ID, and certificate details
 
 ### Apple ID: can this be any email?
@@ -222,6 +240,26 @@ or set:
 ```bash
 RUN_APP_SIGN_IDENTITY="Developer ID Application: Your Name (ABCDE12345)" scripts/run_app_bundle.sh
 ```
+
+If you need to attach from another process while debugging, enable `get-task-allow` for the local app bundle:
+
+```bash
+scripts/run_app_bundle.sh --allow-debugging
+```
+
+or set:
+
+```bash
+RUN_APP_ALLOW_DEBUGGING=1 scripts/run_app_bundle.sh
+```
+
+For direct packaging script usage:
+
+```bash
+APP_SIGN_IDENTITY="-" scripts/build_dmg.sh --app-only --allow-debugging
+```
+
+This is intentionally limited to `--app-only` builds. `get-task-allow` is a local debugging entitlement and should not be used for notarized/public distribution builds.
 
 ## Verify output
 

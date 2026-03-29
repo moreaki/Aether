@@ -6,6 +6,7 @@ ROOT_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
 
 TARGET_ARCH=""
 SIGN_IDENTITY="${RUN_APP_SIGN_IDENTITY:--}"
+ALLOW_DEBUGGING="${RUN_APP_ALLOW_DEBUGGING:-0}"
 EXTRA_ARGS=()
 
 usage() {
@@ -17,11 +18,13 @@ Builds Aether.app as a bundle (no DMG), then launches it.
 Options:
   --arch <target>      arm64, x86_64, or universal
   --sign-identity <id> Override signing identity for local run (default: -)
+  --allow-debugging    Add get-task-allow entitlement for debugger attach
   -h, --help           Show this help
 
 Examples:
   scripts/run_app_bundle.sh
   scripts/run_app_bundle.sh --arch universal
+  scripts/run_app_bundle.sh --allow-debugging
   scripts/run_app_bundle.sh --sign-identity "Developer ID Application: Your Name (TEAMID)"
   scripts/run_app_bundle.sh -- --version 1.2.1
 USAGE
@@ -36,6 +39,10 @@ while [[ $# -gt 0 ]]; do
     --sign-identity)
       SIGN_IDENTITY="$2"
       shift 2
+      ;;
+    --allow-debugging)
+      ALLOW_DEBUGGING=1
+      shift
       ;;
     -h|--help)
       usage
@@ -67,6 +74,7 @@ fi
 
 cd "${ROOT_DIR}"
 APP_SIGN_IDENTITY="${SIGN_IDENTITY}" \
+ENABLE_GET_TASK_ALLOW="${ALLOW_DEBUGGING}" \
   "${SCRIPT_DIR}/build_dmg.sh" \
   --app-only \
   --open-app \

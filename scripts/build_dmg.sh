@@ -23,6 +23,7 @@ MIN_MACOS_VERSION="${MIN_MACOS_VERSION:-14.0}"
 DMG_VOLUME_NAME="${DMG_VOLUME_NAME:-Aether}"
 APP_ONLY="${APP_ONLY:-0}"
 OPEN_APP="${OPEN_APP:-0}"
+ENABLE_GET_TASK_ALLOW="${ENABLE_GET_TASK_ALLOW:-0}"
 
 usage() {
   cat <<USAGE
@@ -36,6 +37,7 @@ Options:
   --bundle-id <id>          Bundle identifier (default: com.aether.app)
   --app-only                Build/sign app bundle only (no DMG/notarization)
   --open-app                Open resulting app bundle when done
+  --allow-debugging         Sign app with get-task-allow entitlement
   --skip-notarization       Skip notarization/stapling
   -h, --help                Show this help
 
@@ -55,6 +57,7 @@ Optional env vars:
   BUNDLE_ID                 Same as --bundle-id
   MIN_MACOS_VERSION         Defaults to 14.0
   DMG_VOLUME_NAME           Defaults to Aether
+  ENABLE_GET_TASK_ALLOW     Set to 1 to add com.apple.security.get-task-allow
 USAGE
 }
 
@@ -80,6 +83,10 @@ while [[ $# -gt 0 ]]; do
       OPEN_APP=1
       shift
       ;;
+    --allow-debugging)
+      ENABLE_GET_TASK_ALLOW=1
+      shift
+      ;;
     --skip-notarization)
       SKIP_NOTARIZATION=1
       shift
@@ -101,6 +108,37 @@ require_cmd() {
     echo "Missing required command: $1" >&2
     exit 1
   }
+}
+
+warn_if_clt_only_toolchain() {
+  local developer_dir
+  developer_dir="$(xcode-select -p 2>/dev/null || true)"
+
+  if [[ "${developer_dir}" == "/Library/Developer/CommandLineTools" ]]; then
+    printf '%s\n' \
+      'Warning: Active developer directory is Command Line Tools only.' \
+      'Some SwiftUI macro-based packages (for example HighlightSwift >= 1.1.0 using @Entry/#Preview)' \
+      'may fail to compile without a full Xcode toolchain.' \
+      '' \
+      'To prepare this environment for those packages:' \
+      '  1) Install full Xcode' \
+      '  2) sudo xcode-select -s /Applications/Xcode.app/Contents/Developer' \
+      '  3) sudo xcodebuild -runFirstLaunch' \
+      '  4) sudo xcodebuild -license accept' \
+      '  5) Verify: xcode-select -p && xcodebuild -version && swift --version' \
+      '' \
+      'See BUILD.md ("Full Xcode Toolchain") for details.' \
+      >&2
+    return
+  fi
+
+  if ! xcodebuild -version >/dev/null 2>&1; then
+    printf '%s\n' \
+      'Warning: xcodebuild is unavailable in the active toolchain.' \
+      'Some SwiftUI macro-based packages may fail to compile without full Xcode.' \
+      'See BUILD.md ("Full Xcode Toolchain") for setup steps.' \
+      >&2
+  fi
 }
 
 generate_app_icon_icns() {
@@ -180,6 +218,12 @@ if [[ "${SKIP_NOTARIZATION}" != "1" && -z "${NOTARY_PROFILE}" ]]; then
   exit 1
 fi
 
+if [[ "${ENABLE_GET_TASK_ALLOW}" == "1" && "${APP_ONLY}" != "1" ]]; then
+  echo "--allow-debugging is supported only with --app-only builds." >&2
+  echo "get-task-allow is intended for local debugging, not notarized distribution." >&2
+  exit 1
+fi
+
 if [[ -z "${APP_VERSION}" ]]; then
   APP_VERSION="$(git -C "${ROOT_DIR}" describe --tags --abbrev=0 2>/dev/null || true)"
   APP_VERSION="${APP_VERSION#v}"
@@ -214,6 +258,7 @@ require_cmd lipo
 require_cmd codesign
 require_cmd sips
 require_cmd iconutil
+warn_if_clt_only_toolchain
 if [[ "${APP_ONLY}" != "1" ]]; then
   require_cmd hdiutil
 fi
@@ -232,6 +277,7 @@ mkdir -p "${WORK_DIR}" "${DIST_DIR}"
 log "Build metadata: version=${APP_VERSION}, build=${APP_BUILD}, commit=${BUILD_COMMIT}, arch=${TARGET_ARCH}"
 
 APP_DIR="${WORK_DIR}/${APP_NAME}.app"
+ENTITLEMENTS_FILE="${WORK_DIR}/${APP_NAME}.entitlements"
 mkdir -p "${APP_DIR}/Contents/MacOS" "${APP_DIR}/Contents/Resources"
 
 RESOURCE_RELEASE_DIR=""
@@ -302,54 +348,69 @@ generate_app_icon_icns \
   "${APP_DIR}/Contents/Resources"
 
 log "Writing Info.plist"
-cat > "${APP_DIR}/Contents/Info.plist" <<PLIST
-<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-  <key>CFBundleDevelopmentRegion</key>
-  <string>en</string>
-  <key>CFBundleExecutable</key>
-  <string>${APP_NAME}</string>
-  <key>CFBundleIdentifier</key>
-  <string>${BUNDLE_ID}</string>
-  <key>CFBundleInfoDictionaryVersion</key>
-  <string>6.0</string>
-  <key>CFBundleName</key>
-  <string>${APP_NAME}</string>
-  <key>CFBundlePackageType</key>
-  <string>APPL</string>
-  <key>CFBundleIconFile</key>
-  <string>AppIcon</string>
-  <key>CFBundleShortVersionString</key>
-  <string>${APP_VERSION}</string>
-  <key>CFBundleVersion</key>
-  <string>${APP_BUILD}</string>
-  <key>AetherBuildTimestamp</key>
-  <string>${BUILD_TIMESTAMP}</string>
-  <key>AetherBuildTargetArch</key>
-  <string>${TARGET_ARCH}</string>
-  <key>AetherBuildCommit</key>
-  <string>${BUILD_COMMIT}</string>
-  <key>AetherLicense</key>
-  <string>${LICENSE_NAME}</string>
-  <key>LSMinimumSystemVersion</key>
-  <string>${MIN_MACOS_VERSION}</string>
-  <key>NSHighResolutionCapable</key>
-  <true/>
-  <key>NSPrincipalClass</key>
-  <string>NSApplication</string>
-</dict>
-</plist>
-PLIST
+{
+  printf '%s\n' '<?xml version="1.0" encoding="UTF-8"?>'
+  printf '%s\n' '<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">'
+  printf '%s\n' '<plist version="1.0">'
+  printf '%s\n' '<dict>'
+  printf '%s\n' '  <key>CFBundleDevelopmentRegion</key>'
+  printf '%s\n' '  <string>en</string>'
+  printf '%s\n' '  <key>CFBundleExecutable</key>'
+  printf '  <string>%s</string>\n' "${APP_NAME}"
+  printf '%s\n' '  <key>CFBundleIdentifier</key>'
+  printf '  <string>%s</string>\n' "${BUNDLE_ID}"
+  printf '%s\n' '  <key>CFBundleInfoDictionaryVersion</key>'
+  printf '%s\n' '  <string>6.0</string>'
+  printf '%s\n' '  <key>CFBundleName</key>'
+  printf '  <string>%s</string>\n' "${APP_NAME}"
+  printf '%s\n' '  <key>CFBundlePackageType</key>'
+  printf '%s\n' '  <string>APPL</string>'
+  printf '%s\n' '  <key>CFBundleIconFile</key>'
+  printf '%s\n' '  <string>AppIcon</string>'
+  printf '%s\n' '  <key>CFBundleShortVersionString</key>'
+  printf '  <string>%s</string>\n' "${APP_VERSION}"
+  printf '%s\n' '  <key>CFBundleVersion</key>'
+  printf '  <string>%s</string>\n' "${APP_BUILD}"
+  printf '%s\n' '  <key>AetherBuildTimestamp</key>'
+  printf '  <string>%s</string>\n' "${BUILD_TIMESTAMP}"
+  printf '%s\n' '  <key>AetherBuildTargetArch</key>'
+  printf '  <string>%s</string>\n' "${TARGET_ARCH}"
+  printf '%s\n' '  <key>AetherBuildCommit</key>'
+  printf '  <string>%s</string>\n' "${BUILD_COMMIT}"
+  printf '%s\n' '  <key>AetherLicense</key>'
+  printf '  <string>%s</string>\n' "${LICENSE_NAME}"
+  printf '%s\n' '  <key>LSMinimumSystemVersion</key>'
+  printf '  <string>%s</string>\n' "${MIN_MACOS_VERSION}"
+  printf '%s\n' '  <key>NSHighResolutionCapable</key>'
+  printf '%s\n' '  <true/>'
+  printf '%s\n' '  <key>NSPrincipalClass</key>'
+  printf '%s\n' '  <string>NSApplication</string>'
+  printf '%s\n' '</dict>'
+  printf '%s\n' '</plist>'
+} > "${APP_DIR}/Contents/Info.plist"
+
+SIGN_ARGS=(--force --sign "${APP_SIGN_IDENTITY}")
+if [[ "${APP_ONLY}" != "1" ]]; then
+  SIGN_ARGS+=(--timestamp --options runtime)
+fi
+
+if [[ "${ENABLE_GET_TASK_ALLOW}" == "1" ]]; then
+  log "Writing entitlements"
+  {
+    printf '%s\n' '<?xml version="1.0" encoding="UTF-8"?>'
+    printf '%s\n' '<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">'
+    printf '%s\n' '<plist version="1.0">'
+    printf '%s\n' '<dict>'
+    printf '%s\n' '  <key>com.apple.security.get-task-allow</key>'
+    printf '%s\n' '  <true/>'
+    printf '%s\n' '</dict>'
+    printf '%s\n' '</plist>'
+  } > "${ENTITLEMENTS_FILE}"
+  SIGN_ARGS+=(--entitlements "${ENTITLEMENTS_FILE}")
+fi
 
 log "Signing app bundle"
-if [[ "${APP_ONLY}" == "1" ]]; then
-  # Local run path: avoid timestamp/runtime requirements that can block on keychain/network.
-  codesign --force --sign "${APP_SIGN_IDENTITY}" "${APP_DIR}"
-else
-  codesign --force --timestamp --options runtime --sign "${APP_SIGN_IDENTITY}" "${APP_DIR}"
-fi
+codesign "${SIGN_ARGS[@]}" "${APP_DIR}"
 codesign --verify --deep --strict --verbose=2 "${APP_DIR}"
 
 if [[ "${SKIP_NOTARIZATION}" != "1" ]]; then
@@ -375,20 +436,20 @@ printf '%s  %s\n' "${APP_EXEC_SHA256}" "${APP_NAME}.app/Contents/MacOS/${APP_NAM
 
 if [[ "${APP_ONLY}" == "1" ]]; then
   MANIFEST_FILE="${DIST_DIR}/${APP_NAME}-${TARGET_ARCH}.build-manifest.json"
-  cat > "${MANIFEST_FILE}" <<JSON
-{
-  "app_name": "${APP_NAME}",
-  "bundle_id": "${BUNDLE_ID}",
-  "version": "${APP_VERSION}",
-  "build": "${APP_BUILD}",
-  "build_timestamp_utc": "${BUILD_TIMESTAMP}",
-  "build_commit": "${BUILD_COMMIT}",
-  "target_arch": "${TARGET_ARCH}",
-  "license": "${LICENSE_NAME}",
-  "app_bundle": "$(basename "${FINAL_APP}")",
-  "app_executable_sha256": "${APP_EXEC_SHA256}"
-}
-JSON
+  {
+    printf '{\n'
+    printf '  "app_name": "%s",\n' "${APP_NAME}"
+    printf '  "bundle_id": "%s",\n' "${BUNDLE_ID}"
+    printf '  "version": "%s",\n' "${APP_VERSION}"
+    printf '  "build": "%s",\n' "${APP_BUILD}"
+    printf '  "build_timestamp_utc": "%s",\n' "${BUILD_TIMESTAMP}"
+    printf '  "build_commit": "%s",\n' "${BUILD_COMMIT}"
+    printf '  "target_arch": "%s",\n' "${TARGET_ARCH}"
+    printf '  "license": "%s",\n' "${LICENSE_NAME}"
+    printf '  "app_bundle": "%s",\n' "$(basename "${FINAL_APP}")"
+    printf '  "app_executable_sha256": "%s"\n' "${APP_EXEC_SHA256}"
+    printf '}\n'
+  } > "${MANIFEST_FILE}"
 
   log "Done"
   echo "App: ${FINAL_APP}"
@@ -440,21 +501,21 @@ MANIFEST_FILE="${DIST_DIR}/${APP_NAME}-${TARGET_ARCH}.build-manifest.json"
 printf '%s  %s\n' "${APP_EXEC_SHA256}" "${APP_NAME}.app/Contents/MacOS/${APP_NAME}" > "${APP_SHA_FILE}"
 printf '%s  %s\n' "${DMG_SHA256}" "$(basename "${FINAL_DMG}")" > "${DMG_SHA_FILE}"
 
-cat > "${MANIFEST_FILE}" <<JSON
 {
-  "app_name": "${APP_NAME}",
-  "bundle_id": "${BUNDLE_ID}",
-  "version": "${APP_VERSION}",
-  "build": "${APP_BUILD}",
-  "build_timestamp_utc": "${BUILD_TIMESTAMP}",
-  "build_commit": "${BUILD_COMMIT}",
-  "target_arch": "${TARGET_ARCH}",
-  "license": "${LICENSE_NAME}",
-  "app_executable_sha256": "${APP_EXEC_SHA256}",
-  "dmg_file": "$(basename "${FINAL_DMG}")",
-  "dmg_sha256": "${DMG_SHA256}"
-}
-JSON
+  printf '{\n'
+  printf '  "app_name": "%s",\n' "${APP_NAME}"
+  printf '  "bundle_id": "%s",\n' "${BUNDLE_ID}"
+  printf '  "version": "%s",\n' "${APP_VERSION}"
+  printf '  "build": "%s",\n' "${APP_BUILD}"
+  printf '  "build_timestamp_utc": "%s",\n' "${BUILD_TIMESTAMP}"
+  printf '  "build_commit": "%s",\n' "${BUILD_COMMIT}"
+  printf '  "target_arch": "%s",\n' "${TARGET_ARCH}"
+  printf '  "license": "%s",\n' "${LICENSE_NAME}"
+  printf '  "app_executable_sha256": "%s",\n' "${APP_EXEC_SHA256}"
+  printf '  "dmg_file": "%s",\n' "$(basename "${FINAL_DMG}")"
+  printf '  "dmg_sha256": "%s"\n' "${DMG_SHA256}"
+  printf '}\n'
+} > "${MANIFEST_FILE}"
 
 log "Done"
 echo "DMG: ${FINAL_DMG}"

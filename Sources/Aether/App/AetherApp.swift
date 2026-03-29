@@ -239,10 +239,22 @@ struct SettingsView: View {
                     Label(translate("settings.tab.analysis"), systemImage: "cpu")
                 }
 
+            DecompilerSettingsTab()
+                .tabItem {
+                    Label(translate("settings.tab.decompiler"), systemImage: "highlighter")
+                }
+
             AISettingsTab()
                 .tabItem {
                     Label(translate("settings.tab.ai"), systemImage: "brain")
                 }
+
+            if appState.isCurrentFileJava {
+                JavaDecompilerSettingsTab()
+                    .tabItem {
+                        Label(translate("settings.tab.java"), systemImage: "cup.and.saucer.fill")
+                    }
+            }
         }
         .frame(width: 500, height: 350)
     }
@@ -324,6 +336,10 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         Task { @MainActor in
             setAppIcon()
         }
+    }
+
+    func applicationWillTerminate(_ notification: Notification) {
+        VineflowerDecompiler.cleanupStaleAetherVineflowerProcesses()
     }
 
     @MainActor
