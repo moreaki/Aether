@@ -1,7 +1,7 @@
 import Foundation
 
 enum AetherCLI {
-    private static let supportedCommands: Set<String> = ["help", "analyze", "functions", "disassemble", "decompile"]
+    private static let supportedCommands: Set<String> = ["help", "analyze", "functions", "listAllFunctions", "disassemble", "decompile"]
 
     static func runIfRequested(arguments: [String] = CommandLine.arguments) -> Int32? {
         guard arguments.count > 1 else {
@@ -27,6 +27,8 @@ enum AetherCLI {
                 try analyze(invocation)
             case .functions:
                 try listFunctions(invocation)
+            case .listAllFunctions:
+                try listFunctions(invocation)
             case .disassemble:
                 try disassemble(invocation)
             case .decompile:
@@ -48,6 +50,7 @@ enum AetherCLI {
           Aether help
           Aether analyze <input> [--refresh] [--output <plain|json>]
           Aether functions <input> [--refresh] [--no-cache] [--output <plain|json>]
+          Aether listAllFunctions <input> [--refresh] [--no-cache] [--output <plain|json>]
           Aether disassemble <input> [--function <name|address>] [--limit <count>] [--refresh] [--no-cache] [--output <plain|ansi|json>]
           Aether decompile <input> [--function <name|address>] [--backend <native|radare2|internal|vineflower>] [--refresh] [--no-cache] [--output <plain|ansi|json>] [--line-numbers <none|all|function>] [--highlight]
 
@@ -166,6 +169,7 @@ private enum CLICommand {
     case help
     case analyze
     case functions
+    case listAllFunctions
     case disassemble
     case decompile
 }
@@ -211,6 +215,8 @@ private struct CLIInvocation {
             self.command = .analyze
         case "functions":
             self.command = .functions
+        case "listAllFunctions":
+            self.command = .listAllFunctions
         case "disassemble":
             self.command = .disassemble
         case "decompile":
@@ -570,6 +576,7 @@ private final class CLIContext {
         analyzedFunctionsCache = analyzed
         if useCache {
             try cacheManager.save(functions: analyzed)
+            try cacheManager.saveAnalyzedFunctions(analyzed)
         }
         return analyzed
     }
@@ -583,6 +590,11 @@ private final class CLIContext {
            !fullCache.basicBlocks.isEmpty {
             analyzedSingleFunctionsByAddress[address] = fullCache
             return fullCache
+        }
+
+        if useCache, !refreshCache, let cached = try cacheManager.loadAnalyzedFunction(at: address) {
+            analyzedSingleFunctionsByAddress[address] = cached
+            return cached
         }
 
         guard binary.sections.contains(where: { $0.contains(address: address) }) else {
@@ -600,8 +612,28 @@ private final class CLIContext {
 
         if let analyzed {
             analyzedSingleFunctionsByAddress[address] = analyzed
+            if useCache {
+                try cacheManager.saveAnalyzedFunction(analyzed)
+                mergeIntoAnalyzedFunctionCache(analyzed)
+            }
         }
         return analyzed
+    }
+
+    private func mergeIntoAnalyzedFunctionCache(_ function: Function) {
+        guard var cached = analyzedFunctionsCache else {
+            analyzedFunctionsCache = [function]
+            return
+        }
+
+        if let index = cached.firstIndex(where: { $0.startAddress == function.startAddress }) {
+            cached[index] = function
+        } else {
+            cached.append(function)
+            cached.sort { $0.startAddress < $1.startAddress }
+        }
+
+        analyzedFunctionsCache = cached
     }
 
     private func defaultNativeFunction(preferredIdentifier: String?) throws -> Function? {
@@ -744,11 +776,66 @@ private struct CLIAnalysisCacheManager {
         try data.write(to: cacheURL, options: .atomic)
     }
 
+    func saveAnalyzedFunctions(_ functions: [Function]) throws {
+        for function in functions where !function.basicBlocks.isEmpty {
+            try saveAnalyzedFunction(function)
+        }
+    }
+
+    func loadAnalyzedFunction(at address: UInt64) throws -> Function? {
+        let cacheURL = try analyzedFunctionCacheURL(for: address)
+        guard FileManager.default.fileExists(atPath: cacheURL.path) else {
+            return nil
+        }
+
+        let data = try Data(contentsOf: cacheURL)
+        let snapshot = try JSONDecoder().decode(CachedAnalyzedFunctionSnapshot.self, from: data)
+
+        guard snapshot.version == CLIAnalysisCacheSnapshot.currentVersion,
+              snapshot.inputPath == url.path,
+              snapshot.fileSize == fileSize,
+              snapshot.modificationTime == modificationTime else {
+            return nil
+        }
+
+        return snapshot.function.function
+    }
+
+    func saveAnalyzedFunction(_ function: Function) throws {
+        let cacheURL = try analyzedFunctionCacheURL(for: function.startAddress)
+        try FileManager.default.createDirectory(
+            at: cacheURL.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
+
+        let snapshot = CachedAnalyzedFunctionSnapshot(
+            inputPath: url.path,
+            fileSize: fileSize,
+            modificationTime: modificationTime,
+            function: CachedAnalyzedFunction(function: function)
+        )
+
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+        let data = try encoder.encode(snapshot)
+        try data.write(to: cacheURL, options: .atomic)
+    }
+
     func cacheURL() throws -> URL {
         let cacheRoot = FileManager.default.homeDirectoryForCurrentUser
             .appendingPathComponent("Library/Caches/Aether/cli", isDirectory: true)
         let key = stableHash("\(url.path)|\(fileSize)|\(modificationTime)")
         return cacheRoot.appendingPathComponent("\(key).json")
+    }
+
+    private func analyzedFunctionCacheURL(for address: UInt64) throws -> URL {
+        let cacheRoot = FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent("Library/Caches/Aether/cli", isDirectory: true)
+        let key = stableHash("\(url.path)|\(fileSize)|\(modificationTime)")
+        return cacheRoot
+            .appendingPathComponent(key, isDirectory: true)
+            .appendingPathComponent("functions", isDirectory: true)
+            .appendingPathComponent(String(format: "%016llX.json", address))
     }
 
     private func stableHash(_ string: String) -> String {
@@ -762,7 +849,7 @@ private struct CLIAnalysisCacheManager {
 }
 
 private struct CLIAnalysisCacheSnapshot: Codable {
-    static let currentVersion = 2
+    static let currentVersion = 3
 
     let version: Int
     let inputPath: String
@@ -790,6 +877,27 @@ private struct CLIAnalysisCacheSnapshot: Codable {
     }
 }
 
+private struct CachedAnalyzedFunctionSnapshot: Codable {
+    let version: Int
+    let inputPath: String
+    let fileSize: UInt64
+    let modificationTime: TimeInterval
+    let function: CachedAnalyzedFunction
+
+    init(
+        inputPath: String,
+        fileSize: UInt64,
+        modificationTime: TimeInterval,
+        function: CachedAnalyzedFunction
+    ) {
+        self.version = CLIAnalysisCacheSnapshot.currentVersion
+        self.inputPath = inputPath
+        self.fileSize = fileSize
+        self.modificationTime = modificationTime
+        self.function = function
+    }
+}
+
 private struct CachedFunction: Codable {
     let name: String
     let startAddress: UInt64
@@ -807,6 +915,155 @@ private struct CachedFunction: Codable {
         var function = Function(name: name, startAddress: startAddress, endAddress: endAddress)
         function.isLeaf = isLeaf
         return function
+    }
+}
+
+private struct CachedAnalyzedFunction: Codable {
+    let name: String
+    let startAddress: UInt64
+    let endAddress: UInt64
+    let callers: [UInt64]
+    let callees: [UInt64]
+    let basicBlocks: [CachedBasicBlock]
+    let isThunk: Bool
+    let isLeaf: Bool
+    let stackSize: Int
+    let arguments: [CachedFunctionArgument]
+    let localVariables: [CachedLocalVariable]
+
+    init(function: Function) {
+        self.name = function.name
+        self.startAddress = function.startAddress
+        self.endAddress = function.endAddress
+        self.callers = function.callers.sorted()
+        self.callees = function.callees.sorted()
+        self.basicBlocks = function.basicBlocks.map(CachedBasicBlock.init)
+        self.isThunk = function.isThunk
+        self.isLeaf = function.isLeaf
+        self.stackSize = function.stackSize
+        self.arguments = function.arguments.map(CachedFunctionArgument.init)
+        self.localVariables = function.localVariables.map(CachedLocalVariable.init)
+    }
+
+    var function: Function {
+        var function = Function(name: name, startAddress: startAddress, endAddress: endAddress)
+        function.callers = Set(callers)
+        function.callees = Set(callees)
+        function.basicBlocks = basicBlocks.map(\.basicBlock)
+        function.isThunk = isThunk
+        function.isLeaf = isLeaf
+        function.stackSize = stackSize
+        function.arguments = arguments.map(\.functionArgument)
+        function.localVariables = localVariables.map(\.localVariable)
+        return function
+    }
+}
+
+private struct CachedBasicBlock: Codable {
+    let startAddress: UInt64
+    let endAddress: UInt64
+    let instructions: [CachedInstruction]
+    let successors: [UInt64]
+    let predecessors: [UInt64]
+    let type: BasicBlockType
+
+    init(_ basicBlock: BasicBlock) {
+        self.startAddress = basicBlock.startAddress
+        self.endAddress = basicBlock.endAddress
+        self.instructions = basicBlock.instructions.map(CachedInstruction.init)
+        self.successors = basicBlock.successors
+        self.predecessors = basicBlock.predecessors
+        self.type = basicBlock.type
+    }
+
+    var basicBlock: BasicBlock {
+        var block = BasicBlock(startAddress: startAddress, endAddress: endAddress)
+        block.instructions = instructions.map(\.instruction)
+        block.successors = successors
+        block.predecessors = predecessors
+        block.type = type
+        return block
+    }
+}
+
+private struct CachedInstruction: Codable {
+    let address: UInt64
+    let size: Int
+    let bytes: [UInt8]
+    let mnemonic: String
+    let operands: String
+    let architecture: Architecture
+    let comment: String?
+    let xrefsFrom: [UInt64]
+    let xrefsTo: [UInt64]
+    let type: InstructionType
+    let branchTarget: UInt64?
+
+    init(_ instruction: Instruction) {
+        self.address = instruction.address
+        self.size = instruction.size
+        self.bytes = instruction.bytes
+        self.mnemonic = instruction.mnemonic
+        self.operands = instruction.operands
+        self.architecture = instruction.architecture
+        self.comment = instruction.comment
+        self.xrefsFrom = instruction.xrefsFrom
+        self.xrefsTo = instruction.xrefsTo
+        self.type = instruction.type
+        self.branchTarget = instruction.branchTarget
+    }
+
+    var instruction: Instruction {
+        var instruction = Instruction(
+            address: address,
+            size: size,
+            bytes: bytes,
+            mnemonic: mnemonic,
+            operands: operands,
+            architecture: architecture
+        )
+        instruction.comment = comment
+        instruction.xrefsFrom = xrefsFrom
+        instruction.xrefsTo = xrefsTo
+        instruction.type = type
+        instruction.branchTarget = branchTarget
+        return instruction
+    }
+}
+
+private struct CachedFunctionArgument: Codable {
+    let name: String
+    let type: String
+    let register: String?
+    let stackOffset: Int?
+
+    init(_ argument: FunctionArgument) {
+        self.name = argument.name
+        self.type = argument.type
+        self.register = argument.register
+        self.stackOffset = argument.stackOffset
+    }
+
+    var functionArgument: FunctionArgument {
+        FunctionArgument(name: name, type: type, register: register, stackOffset: stackOffset)
+    }
+}
+
+private struct CachedLocalVariable: Codable {
+    let name: String
+    let type: String
+    let stackOffset: Int
+    let size: Int
+
+    init(_ localVariable: LocalVariable) {
+        self.name = localVariable.name
+        self.type = localVariable.type
+        self.stackOffset = localVariable.stackOffset
+        self.size = localVariable.size
+    }
+
+    var localVariable: LocalVariable {
+        LocalVariable(name: name, type: type, stackOffset: stackOffset, size: size)
     }
 }
 

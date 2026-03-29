@@ -217,6 +217,7 @@ struct HighlightSwiftCodeView: View {
             ForEach(Array(displayLines.enumerated()), id: \.offset) { index, line in
                 let plainLine = displayPlainLines[index]
                 let targetFunction = referencedFunction(in: plainLine, appState: appState)
+                let semanticHelp = semanticHelperDescription(in: plainLine)
                 HStack(alignment: .firstTextBaseline, spacing: 0) {
                     Text(displayLineNumber(index: index))
                         .font(.system(size: fontSize, design: .monospaced))
@@ -230,6 +231,7 @@ struct HighlightSwiftCodeView: View {
                         .font(.system(size: fontSize, design: .monospaced))
                         .fixedSize(horizontal: true, vertical: false)
                         .textSelection(.enabled)
+                        .modifier(OptionalHelpModifier(helpText: semanticHelp))
 
                     if let targetFunction {
                         JumpToFunctionButton(function: targetFunction)
@@ -389,6 +391,7 @@ struct SyntaxHighlightedCode: View {
         VStack(alignment: .leading, spacing: 0) {
             ForEach(Array(lines.enumerated()), id: \.offset) { index, line in
                 let targetFunction = referencedFunction(in: line, appState: appState)
+                let semanticHelp = semanticHelperDescription(in: line)
                 HStack(alignment: .firstTextBaseline, spacing: 0) {
                     // Line number
                     Text(displayLineNumber(index: index))
@@ -400,6 +403,7 @@ struct SyntaxHighlightedCode: View {
 
                     // Code line
                     highlightedLine(String(line))
+                        .modifier(OptionalHelpModifier(helpText: semanticHelp))
 
                     if let targetFunction {
                         JumpToFunctionButton(function: targetFunction)
@@ -655,6 +659,50 @@ private func referencedFunction(in line: String, appState: AppState) -> Function
 @MainActor
 private func hasFunctionReferences(_ code: String, appState: AppState) -> Bool {
     normalizedLines(from: code).contains { referencedFunction(in: $0, appState: appState) != nil }
+}
+
+private struct OptionalHelpModifier: ViewModifier {
+    let helpText: String?
+
+    @ViewBuilder
+    func body(content: Content) -> some View {
+        if let helpText {
+            content.help(helpText)
+        } else {
+            content
+        }
+    }
+}
+
+private func semanticHelperDescription(in line: String) -> String? {
+    let helperDescriptions: [(String, String)] = [
+        ("clear_direction_flag(", "Clears the CPU direction flag so string instructions advance forward."),
+        ("set_direction_flag(", "Sets the CPU direction flag so string instructions run backward."),
+        ("disable_interrupts(", "Clears the interrupt-enable flag so maskable hardware interrupts are temporarily blocked."),
+        ("enable_interrupts(", "Sets the interrupt-enable flag so maskable hardware interrupts are accepted again."),
+        ("bios_get_video_state(", "BIOS INT 10h AH=0Fh: reads the current video mode, text columns, and active page."),
+        ("bios_set_video_mode(", "BIOS INT 10h AH=00h: switches the display adapter into the requested video mode."),
+        ("bios_set_cursor_shape(", "BIOS INT 10h AH=01h: changes the text-mode cursor start and end scanlines."),
+        ("bios_set_cursor_position(", "BIOS INT 10h AH=02h: moves the text cursor to the given page, row, and column."),
+        ("bios_scroll_up_window(", "BIOS INT 10h AH=06h: scrolls or clears a rectangular text window."),
+        ("bios_write_char_attr(", "BIOS INT 10h AH=09h: writes a character with a text attribute at the cursor."),
+        ("bios_teletype_output(", "BIOS INT 10h AH=0Eh: prints one character and advances the cursor."),
+        ("bios_read_key(", "BIOS INT 16h AH=00h: waits for a keypress and returns ASCII in AL and scan code in AH."),
+        ("dos_exit(", "DOS INT 21h AH=4Ch: terminates the program and returns the given exit code."),
+        ("dos_print_string(", "DOS INT 21h AH=09h: prints a '$'-terminated string from DS:DX."),
+        ("port_out8(", "Writes one byte to an I/O port, typically to program hardware registers directly."),
+        ("port_out16(", "Writes one 16-bit word to an I/O port, typically to program hardware registers directly."),
+        ("fill_words(", "Stores the same 16-bit value repeatedly, like a `rep stosw` memory fill."),
+        ("load_word_and_advance(", "Loads a 16-bit word from DS:SI and advances SI, matching `lodsw`."),
+        ("load_byte_and_advance(", "Loads a byte from DS:SI and advances SI, matching `lodsb`."),
+        ("MK_FP(", "Builds a real-mode far pointer from a segment and offset pair.")
+    ]
+
+    for (marker, description) in helperDescriptions where line.contains(marker) {
+        return description
+    }
+
+    return nil
 }
 
 // MARK: - Character Extensions

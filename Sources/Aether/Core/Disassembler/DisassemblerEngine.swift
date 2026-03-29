@@ -1080,32 +1080,53 @@ actor DisassemblerEngine {
             let rn = (insn >> 5) & 0x1F
             let rd = insn & 0x1F
 
-            let destReg = sf == 1 ? "x\(rd)" : "w\(rd)"
-            let srcReg = sf == 1 ? "x\(rn)" : "w\(rn)"
+            let destReg = arm64StackAwareRegister(index: rd, is64Bit: sf == 1)
+            let srcReg = arm64StackAwareRegister(index: rn, is64Bit: sf == 1)
             let value = sh == 1 ? imm12 << 12 : imm12
             let mnemonic = op == 0 ? "add" : "sub"
 
             return (mnemonic, "\(destReg), \(srcReg), #\(value)", .arithmetic, nil)
         }
 
-        // STP (Store Pair)
-        if (insn & 0x7FC00000) == 0x29000000 {
+        // STP (Store Pair) - pre-index
+        if (insn & 0xFFC00000) == 0xA9800000 {
             let rt = insn & 0x1F
             let rn = (insn >> 5) & 0x1F
             let rt2 = (insn >> 10) & 0x1F
             let imm7 = (insn >> 15) & 0x7F
             let offset = signExtend(imm7, bits: 7) * 8
-            return ("stp", "x\(rt), x\(rt2), [x\(rn), #\(offset)]", .store, nil)
+            return ("stp", "x\(rt), x\(rt2), [\(arm64StackAwareRegister(index: rn, is64Bit: true)), #\(offset)]!", .store, nil)
         }
 
-        // LDP (Load Pair)
-        if (insn & 0x7FC00000) == 0x29400000 {
+        // LDP (Load Pair) - post-index
+        if (insn & 0xFFC00000) == 0xA8C00000 {
             let rt = insn & 0x1F
             let rn = (insn >> 5) & 0x1F
             let rt2 = (insn >> 10) & 0x1F
             let imm7 = (insn >> 15) & 0x7F
             let offset = signExtend(imm7, bits: 7) * 8
-            return ("ldp", "x\(rt), x\(rt2), [x\(rn), #\(offset)]", .load, nil)
+            return ("ldp", "x\(rt), x\(rt2), [\(arm64StackAwareRegister(index: rn, is64Bit: true))], #\(offset)", .load, nil)
+        }
+
+        // STP (Store Pair) - signed offset
+        if (insn & 0xFFC00000) == 0xA9000000 {
+            let rt = insn & 0x1F
+            let rn = (insn >> 5) & 0x1F
+            let rt2 = (insn >> 10) & 0x1F
+            let imm7 = (insn >> 15) & 0x7F
+            let offset = signExtend(imm7, bits: 7) * 8
+            return ("stp", "x\(rt), x\(rt2), [\(arm64StackAwareRegister(index: rn, is64Bit: true)), #\(offset)]", .store, nil)
+        }
+
+        // LDP (Load Pair) - signed offset / pre-index
+        if (insn & 0xFFC00000) == 0xA9400000 || (insn & 0xFFC00000) == 0xA9C00000 {
+            let rt = insn & 0x1F
+            let rn = (insn >> 5) & 0x1F
+            let rt2 = (insn >> 10) & 0x1F
+            let imm7 = (insn >> 15) & 0x7F
+            let offset = signExtend(imm7, bits: 7) * 8
+            let suffix = (insn & 0xFFC00000) == 0xA9C00000 ? "!" : ""
+            return ("ldp", "x\(rt), x\(rt2), [\(arm64StackAwareRegister(index: rn, is64Bit: true)), #\(offset)]\(suffix)", .load, nil)
         }
 
         // Unknown instruction
@@ -1140,6 +1161,13 @@ actor DisassemblerEngine {
         }
 
         return instructions
+    }
+
+    private func arm64StackAwareRegister(index: UInt32, is64Bit: Bool) -> String {
+        if index == 31 {
+            return is64Bit ? "sp" : "wsp"
+        }
+        return is64Bit ? "x\(index)" : "w\(index)"
     }
 
     // MARK: - JVM Bytecode Disassembly

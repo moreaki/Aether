@@ -10,6 +10,7 @@ class Decompiler {
     private var variableNames: [String: String] = [:]
     private var variableCounter = 0
     private var cachedBinaryID: UUID?
+    private var currentReturnType = "void"
 
     /// Decompile a function to pseudo-C code
     func decompile(function: Function, instructions: [Instruction], binary: BinaryFile) -> String {
@@ -29,6 +30,7 @@ class Decompiler {
 
         // Generate function signature
         let returnType = inferReturnType(instructions: instructions, architecture: binary.architecture)
+        currentReturnType = returnType
         let params = inferParameters(instructions: instructions, architecture: binary.architecture)
         let paramStr = params.isEmpty ? "void" : params.joined(separator: ", ")
 
@@ -83,6 +85,8 @@ class Decompiler {
 
         if binary.format == .dos || binary.architecture == .x86_16 {
             output = refineDOSPseudoCode(output)
+        } else if currentReturnType == "void" {
+            output = refineVoidPseudoCode(output)
         }
 
         return output
@@ -172,6 +176,19 @@ class Decompiler {
         }
 
         return refined
+    }
+
+    private func refineVoidPseudoCode(_ source: String) -> String {
+        let replacements: [(pattern: String, template: String)] = [
+            (
+                pattern: #"(?m)^([ \t]*)result = 0;\n\1return;"#,
+                template: "$1return;"
+            )
+        ]
+
+        return replacements.reduce(source) { partial, replacement in
+            replacingRegex(pattern: replacement.pattern, in: partial, template: replacement.template)
+        }
     }
 
     private func decompileRecognizedDOSFunction(
@@ -665,6 +682,7 @@ class Decompiler {
         // ARM64 patterns
         if mnem == "stp" && ops.contains("x29, x30") { return true }
         if mnem == "ldp" && ops.contains("x29, x30") { return true }
+        if (mnem == "mov" && ops == "x29, sp") || (mnem == "add" && ops == "x29, sp, #0") { return true }
 
         return false
     }
@@ -782,7 +800,9 @@ class Decompiler {
     }
 
     private func decompileReturn(_ insn: Instruction, binary: BinaryFile) -> String {
-        // Simple heuristic: if not void function, return the result
+        if currentReturnType == "void" {
+            return "return;"
+        }
         return "return result;"
     }
 
@@ -1069,7 +1089,7 @@ class Decompiler {
             "x8": "indirect_result", "w8": "indirect_result",
             "x9": "temp1", "x10": "temp2", "x11": "temp3",
             "x19": "x19_saved", "x20": "x20_saved", "x21": "x21_saved",
-            "x29": "frame_ptr", "x30": "link_reg",
+            "x29": "frame_ptr", "x30": "link_reg", "x31": "sp", "w31": "wsp",
         ]
 
         return regMap[r] ?? r
@@ -1863,6 +1883,7 @@ class EnhancedCodePrinter {
         if mnem == "leave" { return true }
         if mnem == "stp" && ops.contains("x29, x30") { return true }
         if mnem == "ldp" && ops.contains("x29, x30") { return true }
+        if (mnem == "mov" && ops == "x29, sp") || (mnem == "add" && ops == "x29, sp, #0") { return true }
 
         return false
     }
