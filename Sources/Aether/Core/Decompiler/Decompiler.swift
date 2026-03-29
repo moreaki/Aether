@@ -210,6 +210,10 @@ class Decompiler {
             (
                 pattern: #"(?m)^([ \t]*)ah = 0x01;\n\1ch = (0x[0-9A-Fa-f]+|\d+);\n\1cl = (0x[0-9A-Fa-f]+|\d+);\n\1bios_video_interrupt\(\);"#,
                 template: "$1bios_set_cursor_shape($2, $3);"
+            ),
+            (
+                pattern: #"(?m)^([ \t]*)bios_set_cursor_shape\(0x20, 0x20\);"#,
+                template: "$1hide_text_cursor();"
             )
         ]
 
@@ -225,11 +229,24 @@ class Decompiler {
     }
 
     private func refineDOSLinePatterns(_ source: String) -> String {
-        let lines = source.components(separatedBy: "\n")
+        let aliasedSource = applyInferredDOSAliases(to: source)
+        let lines = aliasedSource.components(separatedBy: "\n")
         var refined: [String] = []
         var index = 0
 
         while index < lines.count {
+            if let replacement = videoStateCaptureReplacement(lines: lines, startIndex: index) {
+                refined.append(contentsOf: replacement.lines)
+                index += replacement.consumed
+                continue
+            }
+
+            if let replacement = tableLookupReplacement(lines: lines, startIndex: index) {
+                refined.append(replacement.line)
+                index += replacement.consumed
+                continue
+            }
+
             if let replacement = interruptVectorInstallationReplacement(lines: lines, startIndex: index) {
                 refined.append(replacement.line)
                 index += replacement.consumed
@@ -247,6 +264,109 @@ class Decompiler {
         }
 
         return refined.joined(separator: "\n")
+    }
+
+    private func applyInferredDOSAliases(to source: String) -> String {
+        var refined = source
+
+        if let address = firstAddressMatch(
+            pattern: #"(?m)^\s*text_columns = ah;$"#,
+            assignmentPattern: #"(?m)^\s*(?:byte|global)_([0-9A-Fa-f]{4}) = ah;$"#,
+            in: source
+        ) {
+            refined = replaceDOSAddressAliases(address, with: "text_columns", in: refined)
+        }
+
+        if let address = firstAddressMatch(
+            pattern: #"(?m)^\s*active_video_page = bh;$"#,
+            assignmentPattern: #"(?m)^\s*(?:byte|global)_([0-9A-Fa-f]{4}) = bh;$"#,
+            in: source
+        ) {
+            refined = replaceDOSAddressAliases(address, with: "active_video_page", in: refined)
+        }
+
+        if let address = firstAddressMatch(
+            pattern: #"(?m)^\s*dl = (?:byte|global)_([0-9A-Fa-f]{4});\n\s*dl--;\n\s*dh = 0x18;\n\s*bios_clear_text_window\("#,
+            in: refined
+        ) {
+            refined = replaceDOSAddressAliases(address, with: "text_columns", in: refined)
+        }
+
+        if let address = firstAddressMatch(
+            pattern: #"(?m)^\s*bh = (?:byte|global)_([0-9A-Fa-f]{4});\n(?:.*\n){0,2}?\s*bios_(?:set_cursor_position|write_char_attr|teletype_output)\("#,
+            in: refined
+        ) {
+            refined = replaceDOSAddressAliases(address, with: "active_video_page", in: refined)
+        }
+
+        return refined
+    }
+
+    private func firstAddressMatch(pattern: String, assignmentPattern: String? = nil, in source: String) -> String? {
+        let effectivePattern = assignmentPattern ?? pattern
+        guard let regex = try? NSRegularExpression(pattern: effectivePattern) else {
+            return nil
+        }
+        let range = NSRange(source.startIndex..<source.endIndex, in: source)
+        guard let match = regex.firstMatch(in: source, range: range),
+              match.numberOfRanges > 1,
+              let captureRange = Range(match.range(at: 1), in: source) else {
+            return nil
+        }
+        return String(source[captureRange]).uppercased()
+    }
+
+    private func replaceDOSAddressAliases(_ address: String, with replacement: String, in source: String) -> String {
+        let pattern = #"(?<![A-Za-z0-9_])(?:byte|global|word)_\#(address)(?![A-Za-z0-9_])"#
+        return replacingRegex(pattern: pattern, in: source, template: replacement)
+    }
+
+    private func videoStateCaptureReplacement(lines: [String], startIndex: Int) -> (lines: [String], consumed: Int)? {
+        guard startIndex + 3 < lines.count else { return nil }
+
+        let slice = Array(lines[startIndex..<(startIndex + 4)])
+        guard slice[0].trimmingCharacters(in: .whitespaces) == "bios_get_video_state();",
+              let pageStore = matchLine(slice[1], pattern: #"^\s*(byte|global)_([0-9A-Fa-f]{4}) = bh;$"#),
+              let modeStore = matchLine(slice[2], pattern: #"^\s*(byte|global)_([0-9A-Fa-f]{4}) = al;$"#),
+              let colsStore = matchLine(slice[3], pattern: #"^\s*(byte|global)_([0-9A-Fa-f]{4}) = ah;$"#) else {
+            return nil
+        }
+
+        let pageName = "active_video_page"
+        let modeName = "current_video_mode"
+        let columnsName = "text_columns"
+
+        var renamed = Array(lines)
+        let mappings = [
+            "\(pageStore[0])_\(pageStore[1])": pageName,
+            "\(modeStore[0])_\(modeStore[1])": modeName,
+            "\(colsStore[0])_\(colsStore[1])": columnsName,
+        ]
+
+        for position in startIndex..<renamed.count {
+            for (original, replacement) in mappings {
+                renamed[position] = replaceIdentifier(original, with: replacement, in: renamed[position])
+            }
+        }
+
+        return (Array(renamed[startIndex..<(startIndex + 4)]), 4)
+    }
+
+    private func tableLookupReplacement(lines: [String], startIndex: Int) -> (line: String, consumed: Int)? {
+        guard startIndex + 3 < lines.count else { return nil }
+
+        let slice = Array(lines[startIndex..<(startIndex + 4)])
+        let indent = leadingWhitespace(in: slice[0])
+
+        guard let loadMatch = matchLine(slice[0], pattern: #"^\s*ax = ([A-Za-z_][A-Za-z0-9_]*);$"#),
+              let tableMatch = matchLine(slice[1], pattern: #"^\s*bx = (0x[0-9A-Fa-f]+|\d+);$"#),
+              slice[2].trimmingCharacters(in: .whitespaces) == "al = lookup_byte_table(bx, al);",
+              let storeMatch = matchLine(slice[3], pattern: #"^\s*([A-Za-z_][A-Za-z0-9_]*) = ax;$"#),
+              loadMatch[0] == storeMatch[0] else {
+            return nil
+        }
+
+        return ("\(indent)\(storeMatch[0]) = lookup_byte_table(\(tableMatch[0]), \(loadMatch[0]));", 4)
     }
 
     private func interruptVectorInstallationReplacement(lines: [String], startIndex: Int) -> (line: String, consumed: Int)? {
@@ -322,6 +442,11 @@ class Decompiler {
             guard let range = Range(match.range(at: index), in: line) else { return nil }
             return String(line[range])
         }
+    }
+
+    private func replaceIdentifier(_ original: String, with replacement: String, in line: String) -> String {
+        let pattern = #"(?<![A-Za-z0-9_])\#(original)(?![A-Za-z0-9_])"#
+        return replacingRegex(pattern: pattern, in: line, template: replacement)
     }
 
     private func leadingWhitespace(in line: String) -> String {
@@ -1095,6 +1220,8 @@ class Decompiler {
         case "rep", "repe", "repz", "repne", "repnz":
             guard let operand = parts.first else { return "// \(insn.text)" }
             return decompileRepeatedStringInstruction(prefix: mnemonic, operand: operand)
+        case "xlat", "xlatb":
+            return "al = lookup_byte_table(bx, al);"
         default:
             return "// \(insn.text)"
         }
@@ -1940,6 +2067,8 @@ class EnhancedCodePrinter {
         case "rep", "repe", "repz", "repne", "repnz":
             guard let operand = parts.first else { return "// \(insn.text)" }
             return decompileRepeatedOperation(prefix: mnemonic, operand: operand)
+        case "xlat", "xlatb":
+            return "al = lookup_byte_table(bx, al);"
         default:
             return "// \(insn.text)"
         }

@@ -218,10 +218,21 @@ enum DOSInterruptKnowledge {
         case 0x00:
             return call(0x10, service, "bios_set_video_mode", "bios_set_video_mode(al);")
         case 0x01:
+            if state.immediateValue(of: "ch") == 0x20, state.immediateValue(of: "cl") == 0x20 {
+                return call(0x10, service, "hide_text_cursor", "hide_text_cursor();")
+            }
             return call(0x10, service, "bios_set_cursor_shape", "bios_set_cursor_shape(\(state.expression(for: "ch")), \(state.expression(for: "cl")));")
         case 0x02:
             return call(0x10, service, "bios_set_cursor_position", "bios_set_cursor_position(\(state.expression(for: "bh")), \(state.expression(for: "dh")), \(state.expression(for: "dl")));")
         case 0x06:
+            if state.immediateValue(of: "al") == 0 {
+                return call(
+                    0x10,
+                    service,
+                    "bios_clear_text_window",
+                    "bios_clear_text_window(\(state.expression(for: "bh")), \(state.expression(for: "ch")), \(state.expression(for: "cl")), \(state.expression(for: "dh")), \(state.expression(for: "dl")));"
+                )
+            }
             return call(0x10, service, "bios_scroll_up_window", "bios_scroll_up_window(\(state.expression(for: "al")), \(state.expression(for: "bh")), \(state.expression(for: "cx")), \(state.expression(for: "dx")));")
         case 0x09:
             return call(0x10, service, "bios_write_char_attr", "bios_write_char_attr(\(state.expression(for: "al")), \(state.expression(for: "bh")), \(state.expression(for: "bl")), \(state.expression(for: "cx")));")
@@ -358,7 +369,7 @@ private struct RegisterState {
             if let immediate = DOSInterruptKnowledge.parseImmediate(operands[1]) {
                 assignImmediate(immediate, to: destination)
             } else {
-                assignExpression(normalizedExpression(operands[1]), to: destination)
+                assignExpression(normalizedExpression(operands[1], destination: destination), to: destination)
             }
         case "lea":
             guard operands.count == 2, let destination = canonicalRegister(operands[0]) else { return }
@@ -460,18 +471,44 @@ private struct RegisterState {
         }
     }
 
-    private func normalizedExpression(_ text: String, stripBrackets: Bool = false) -> String {
+    private func normalizedExpression(_ text: String, stripBrackets: Bool = false, destination: String? = nil) -> String {
         var value = text.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         if value.hasPrefix("#") {
             value.removeFirst()
         }
+        let isMemory = value.contains("[") && value.contains("]")
         if stripBrackets, value.hasPrefix("[") && value.hasSuffix("]") {
             value = String(value.dropFirst().dropLast())
         }
         if let register = canonicalRegister(value) {
             return register
         }
+        if isMemory, let directAddress = directMemoryAddress(from: value) {
+            let prefix = destination.map(registerWidth(for:)) == 2 ? "byte" : "word"
+            return String(format: "%@_%04X", prefix, directAddress)
+        }
         return value
+    }
+
+    private func directMemoryAddress(from expression: String) -> UInt16? {
+        let normalized = expression
+            .replacingOccurrences(of: "byte ptr ", with: "")
+            .replacingOccurrences(of: "word ptr ", with: "")
+            .replacingOccurrences(of: "dword ptr ", with: "")
+            .replacingOccurrences(of: "qword ptr ", with: "")
+            .replacingOccurrences(of: "es:", with: "")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+
+        guard normalized.hasPrefix("["),
+              normalized.hasSuffix("]") else {
+            return nil
+        }
+
+        let inner = String(normalized.dropFirst().dropLast())
+        if inner.hasPrefix("0x") {
+            return UInt16(inner.dropFirst(2), radix: 16)
+        }
+        return UInt16(inner)
     }
 
     private func formattedImmediate(_ value: UInt16, width: Int) -> String {
