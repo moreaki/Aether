@@ -4,6 +4,34 @@
 "common.go" = "Aller";
 "common.unknownError" = "Erreur inconnue";
 
+"about.menu.title" = "A propos d'Aether";
+"about.window.title" = "A propos d'Aether";
+"about.tagline" = "Au-dela du binaire, vers l'essence.";
+"about.version.format" = "Version %@ (%@)";
+"about.section.buildDetails" = "Details de build";
+"about.field.built" = "Compile le";
+"about.field.source" = "Source";
+"about.field.targetArch" = "Architecture cible";
+"about.field.runningArch" = "Architecture en execution";
+"about.section.integrity" = "Empreinte d'integrite";
+"about.action.copySha" = "Copier SHA-256";
+"about.action.copyReport" = "Copier le rapport de build";
+"about.section.license" = "Licence";
+"about.action.viewLicense" = "Voir le texte de la licence";
+"about.verification.note" = "Comparez la valeur SHA-256 ci-dessus avec les sommes de controle publiees par la source de publication autoritative pour verifier cet executable.";
+"about.report.title" = "Rapport de build Aether";
+"about.report.version" = "Version";
+"about.report.build" = "Build";
+"about.report.built" = "Compile le";
+"about.report.source" = "Source";
+"about.report.targetArch" = "Architecture cible";
+"about.report.runningArch" = "Architecture en execution";
+"about.report.license" = "Licence";
+"about.report.sha256" = "SHA-256 de l'executable";
+"about.hash.calculating" = "Calcul en cours...";
+"about.hash.unavailable" = "Indisponible";
+"about.license.unavailable" = "Le texte de la licence est indisponible dans ce build.";
+
 "menu.file.openBinary" = "Ouvrir un binaire...";
 "menu.file.openProject" = "Ouvrir un projet...";
 "menu.file.saveBinaryAs" = "Enregistrer le binaire sous...";

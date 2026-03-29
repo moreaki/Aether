@@ -4,6 +4,34 @@
 "common.go" = "Go";
 "common.unknownError" = "Unknown error";
 
+"about.menu.title" = "About Aether";
+"about.window.title" = "About Aether";
+"about.tagline" = "Beyond the binary, into the essence.";
+"about.version.format" = "Version %@ (%@)";
+"about.section.buildDetails" = "Build Details";
+"about.field.built" = "Built";
+"about.field.source" = "Source";
+"about.field.targetArch" = "Target Architecture";
+"about.field.runningArch" = "Running Architecture";
+"about.section.integrity" = "Integrity Fingerprint";
+"about.action.copySha" = "Copy SHA-256";
+"about.action.copyReport" = "Copy Build Report";
+"about.section.license" = "License";
+"about.action.viewLicense" = "View License Text";
+"about.verification.note" = "Compare the SHA-256 value above with checksums published by the authoritative release source to verify this executable.";
+"about.report.title" = "Aether Build Report";
+"about.report.version" = "Version";
+"about.report.build" = "Build";
+"about.report.built" = "Built";
+"about.report.source" = "Source";
+"about.report.targetArch" = "Target Architecture";
+"about.report.runningArch" = "Running Architecture";
+"about.report.license" = "License";
+"about.report.sha256" = "Executable SHA-256";
+"about.hash.calculating" = "Calculating...";
+"about.hash.unavailable" = "Unavailable";
+"about.license.unavailable" = "License text is unavailable in this build.";
+
 "menu.file.openBinary" = "Open Binary...";
 "menu.file.openProject" = "Open Project...";
 "menu.file.saveBinaryAs" = "Save Binary As...";

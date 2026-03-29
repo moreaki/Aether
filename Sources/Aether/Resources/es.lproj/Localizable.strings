@@ -4,6 +4,34 @@
 "common.go" = "Ir";
 "common.unknownError" = "Error desconocido";
 
+"about.menu.title" = "Acerca de Aether";
+"about.window.title" = "Acerca de Aether";
+"about.tagline" = "Mas alla del binario, hacia la esencia.";
+"about.version.format" = "Version %@ (%@)";
+"about.section.buildDetails" = "Detalles de compilacion";
+"about.field.built" = "Compilado";
+"about.field.source" = "Fuente";
+"about.field.targetArch" = "Arquitectura de destino";
+"about.field.runningArch" = "Arquitectura en ejecucion";
+"about.section.integrity" = "Huella de integridad";
+"about.action.copySha" = "Copiar SHA-256";
+"about.action.copyReport" = "Copiar informe de compilacion";
+"about.section.license" = "Licencia";
+"about.action.viewLicense" = "Ver texto de la licencia";
+"about.verification.note" = "Compara el valor SHA-256 de arriba con las sumas de verificacion publicadas por la fuente autorizada de lanzamiento para verificar este ejecutable.";
+"about.report.title" = "Informe de compilacion de Aether";
+"about.report.version" = "Version";
+"about.report.build" = "Compilacion";
+"about.report.built" = "Compilado";
+"about.report.source" = "Fuente";
+"about.report.targetArch" = "Arquitectura de destino";
+"about.report.runningArch" = "Arquitectura en ejecucion";
+"about.report.license" = "Licencia";
+"about.report.sha256" = "SHA-256 del ejecutable";
+"about.hash.calculating" = "Calculando...";
+"about.hash.unavailable" = "No disponible";
+"about.license.unavailable" = "El texto de la licencia no esta disponible en esta compilacion.";
+
 "menu.file.openBinary" = "Abrir binario...";
 "menu.file.openProject" = "Abrir proyecto...";
 "menu.file.saveBinaryAs" = "Guardar binario como...";

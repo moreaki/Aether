@@ -16,6 +16,12 @@ struct AetherApp: App {
         }
         .windowStyle(.hiddenTitleBar)
         .commands {
+            CommandGroup(replacing: .appInfo) {
+                Button(translate("about.menu.title")) {
+                    AboutWindowManager.shared.open()
+                }
+            }
+
             CommandGroup(replacing: .newItem) {
                 Button(translate("menu.file.openBinary")) {
                     appState.openFile()
@@ -420,5 +426,32 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
         image.unlockFocus()
         return image
+    }
+}
+
+@MainActor
+final class AboutWindowManager {
+    static let shared = AboutWindowManager()
+    private var window: NSWindow?
+
+    func open() {
+        if let existingWindow = window {
+            existingWindow.makeKeyAndOrderFront(nil)
+            NSApp.activate(ignoringOtherApps: true)
+            return
+        }
+
+        let controller = NSHostingController(rootView: AboutView())
+        let aboutWindow = NSWindow(contentViewController: controller)
+        aboutWindow.title = translate("about.window.title")
+        aboutWindow.styleMask = [.titled, .closable, .miniaturizable, .resizable]
+        aboutWindow.setContentSize(NSSize(width: 620, height: 620))
+        aboutWindow.contentMinSize = NSSize(width: 620, height: 620)
+        aboutWindow.center()
+        aboutWindow.isReleasedWhenClosed = false
+
+        window = aboutWindow
+        aboutWindow.makeKeyAndOrderFront(nil)
+        NSApp.activate(ignoringOtherApps: true)
     }
 }
