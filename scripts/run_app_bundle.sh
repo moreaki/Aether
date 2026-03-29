@@ -8,6 +8,26 @@ TARGET_ARCH=""
 SIGN_IDENTITY="${RUN_APP_SIGN_IDENTITY:--}"
 ALLOW_DEBUGGING="${RUN_APP_ALLOW_DEBUGGING:-0}"
 EXTRA_ARGS=()
+APP_NAME="Aether"
+
+kill_running_app() {
+  if ! pgrep -x "${APP_NAME}" >/dev/null 2>&1; then
+    return 0
+  fi
+
+  echo "Stopping existing ${APP_NAME} process"
+  pkill -x "${APP_NAME}" || true
+
+  for _ in {1..50}; do
+    if ! pgrep -x "${APP_NAME}" >/dev/null 2>&1; then
+      return 0
+    fi
+    sleep 0.1
+  done
+
+  echo "Force stopping existing ${APP_NAME} process"
+  pkill -9 -x "${APP_NAME}" || true
+}
 
 usage() {
   cat <<USAGE
@@ -77,6 +97,14 @@ APP_SIGN_IDENTITY="${SIGN_IDENTITY}" \
 ENABLE_GET_TASK_ALLOW="${ALLOW_DEBUGGING}" \
   "${SCRIPT_DIR}/build_dmg.sh" \
   --app-only \
-  --open-app \
   --arch "${TARGET_ARCH}" \
   "${EXTRA_ARGS[@]}"
+
+APP_BUNDLE="${ROOT_DIR}/dist/${APP_NAME}-${TARGET_ARCH}.app"
+if [[ ! -d "${APP_BUNDLE}" ]]; then
+  echo "Expected app bundle was not created: ${APP_BUNDLE}" >&2
+  exit 1
+fi
+
+kill_running_app
+open "${APP_BUNDLE}"
