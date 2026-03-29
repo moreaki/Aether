@@ -795,6 +795,10 @@ class Decompiler {
         let dest = expression(for: destinationOperand, binary: binary)
         var src = expression(for: sourceOperand, binary: binary)
 
+        if isPortRegister(destinationOperand), let portName = namedPort(for: sourceOperand) {
+            src = portName
+        }
+
         // Check if source is a string address
         if let addr = parseAddress(sourceOperand) {
             if let str = strings[addr] {
@@ -949,10 +953,10 @@ class Decompiler {
             return "\(expression(for: value, binary: binary)) = pop();"
         case "in":
             guard parts.count >= 2 else { return "// \(insn.text)" }
-            return "\(expression(for: parts[0], binary: binary)) = port_in\(bitWidth(for: parts[0]))(\(expression(for: parts[1], binary: binary)));"
+            return "\(expression(for: parts[0], binary: binary)) = port_in\(bitWidth(for: parts[0]))(\(portExpression(for: parts[1], binary: binary)));"
         case "out":
             guard parts.count >= 2 else { return "// \(insn.text)" }
-            return "port_out\(bitWidth(for: parts[1]))(\(expression(for: parts[0], binary: binary)), \(expression(for: parts[1], binary: binary)));"
+            return "port_out\(bitWidth(for: parts[1]))(\(portExpression(for: parts[0], binary: binary)), \(expression(for: parts[1], binary: binary)));"
         case "lodsb", "lodsw", "lodsd", "lodsq":
             let accumulator = accumulatorRegister(for: mnemonic)
             return "\(accumulator) = load_\(stringUnitName(for: mnemonic))(ds, si);"
@@ -1060,6 +1064,34 @@ class Decompiler {
             return memoryToExpression(operand, binary: binary)
         }
         return operandToExpression(operand)
+    }
+
+    private func portExpression(for operand: String, binary: BinaryFile) -> String {
+        if let entry = namedPortEntry(for: operand) {
+            return entry.name
+        }
+        return expression(for: operand, binary: binary)
+    }
+
+    private func isPortRegister(_ operand: String) -> Bool {
+        switch operand.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() {
+        case "dx", "edx", "rdx":
+            return true
+        default:
+            return false
+        }
+    }
+
+    private func namedPort(for operand: String) -> String? {
+        namedPortEntry(for: operand)?.name
+    }
+
+    private func namedPortEntry(for operand: String) -> IOPortReferenceEntry? {
+        let trimmed = operand.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let port = parseAddress(trimmed) else {
+            return nil
+        }
+        return IOPortReferenceStore.entry(port: UInt16(truncatingIfNeeded: port))
     }
 
     private func memoryToExpression(_ operand: String, binary: BinaryFile) -> String {
@@ -1508,7 +1540,7 @@ class EnhancedCodePrinter {
         case .move:
             guard parts.count >= 2 else { return "" }
             let dest = renderOperand(parts[0])
-            let src = renderOperand(parts[1])
+            let src = renderMoveSource(parts[1], destination: parts[0])
             if dest == src { return "" }
             return "\(dest) = \(src);"
 
@@ -1696,6 +1728,20 @@ class EnhancedCodePrinter {
         return mapOperand(operand)
     }
 
+    private func renderPortOperand(_ operand: String) -> String {
+        if let entry = namedPortEntry(for: operand) {
+            return entry.name
+        }
+        return renderOperand(operand)
+    }
+
+    private func renderMoveSource(_ operand: String, destination: String) -> String {
+        if isPortRegister(destination), let portName = namedPort(for: operand) {
+            return portName
+        }
+        return renderOperand(operand)
+    }
+
     private func mapMemory(_ op: String) -> String {
         let (sizeQualifier, segmentOverride, inner) = normalizeMemoryOperand(op)
         let o = inner
@@ -1751,11 +1797,11 @@ class EnhancedCodePrinter {
         case "in":
             guard parts.count >= 2 else { return "// \(insn.text)" }
             let destination = renderOperand(parts[0])
-            let port = renderOperand(parts[1])
+            let port = renderPortOperand(parts[1])
             return "\(destination) = port_in\(bitWidth(for: parts[0]))(\(port));"
         case "out":
             guard parts.count >= 2 else { return "// \(insn.text)" }
-            let port = renderOperand(parts[0])
+            let port = renderPortOperand(parts[0])
             let value = renderOperand(parts[1])
             return "port_out\(bitWidth(for: parts[1]))(\(port), \(value));"
         case "insb", "insw", "insd":
@@ -1907,6 +1953,27 @@ class EnhancedCodePrinter {
             return UInt64(trimmed)
         }
         return nil
+    }
+
+    private func isPortRegister(_ operand: String) -> Bool {
+        switch operand.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() {
+        case "dx", "edx", "rdx":
+            return true
+        default:
+            return false
+        }
+    }
+
+    private func namedPort(for operand: String) -> String? {
+        namedPortEntry(for: operand)?.name
+    }
+
+    private func namedPortEntry(for operand: String) -> IOPortReferenceEntry? {
+        let trimmed = operand.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let port = parseAddress(trimmed) else {
+            return nil
+        }
+        return IOPortReferenceStore.entry(port: UInt16(truncatingIfNeeded: port))
     }
 
     private func bitWidth(for operand: String) -> Int {

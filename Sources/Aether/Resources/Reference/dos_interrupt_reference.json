@@ -1,0 +1,75 @@
+{
+  "version": 1,
+  "sources": [
+    {
+      "id": "helppc",
+      "title": "HelpPC 2.10 Interrupt Reference",
+      "url": "https://stanislavs.org/helppc/int_table.html"
+    },
+    {
+      "id": "rbil",
+      "title": "Ralf Brown Interrupt List (HTML mirror)",
+      "url": "https://www.minuszerodegrees.net/websitecopies/Linux.old/docs/interrupts/int-html/int-21.htm"
+    },
+    {
+      "id": "msdos_ref_1991",
+      "title": "Microsoft MS-DOS Programmer's Reference (1991, Internet Archive text scan)",
+      "url": "https://archive.org/stream/bitsavers_microsoftmProgrammersReference1991_32070717/Microsoft_-_MS-DOS_Programmers_Reference_1991_djvu.txt"
+    }
+  ],
+  "entries": [
+    { "vector": 32, "service": null, "name": "dos_terminate", "wrapperName": "dos_terminate", "summary": "DOS INT 20h terminates the current program using the PSP segment in CS.", "sourceIDs": ["helppc", "rbil"] },
+
+    { "vector": 33, "service": null, "name": "dos_int21", "wrapperName": null, "summary": "DOS INT 21h is the primary MS-DOS function dispatcher; AH selects the service.", "sourceIDs": ["helppc", "rbil"] },
+    { "vector": 33, "service": 1, "name": "dos_read_char_echo", "wrapperName": "dos_read_char_echo", "summary": "DOS INT 21h AH=01h reads a character from standard input and echoes it to standard output.", "sourceIDs": ["helppc", "rbil"] },
+    { "vector": 33, "service": 2, "name": "dos_write_char", "wrapperName": "dos_write_char", "summary": "DOS INT 21h AH=02h writes the character in DL to standard output.", "sourceIDs": ["helppc", "rbil"] },
+    { "vector": 33, "service": 6, "name": "dos_direct_console_io", "wrapperName": "dos_direct_console_io", "summary": "DOS INT 21h AH=06h performs direct console input or output depending on DL.", "sourceIDs": ["helppc", "rbil"] },
+    { "vector": 33, "service": 7, "name": "dos_read_char_no_echo", "wrapperName": "dos_read_char_no_echo", "summary": "DOS INT 21h AH=07h reads one character from standard input without echo.", "sourceIDs": ["helppc", "rbil"] },
+    { "vector": 33, "service": 8, "name": "dos_read_console_char", "wrapperName": "dos_read_console_char", "summary": "DOS INT 21h AH=08h reads one console character without echo and with Ctrl-C checking.", "sourceIDs": ["helppc", "rbil"] },
+    { "vector": 33, "service": 9, "name": "dos_print_string", "wrapperName": "dos_print_string", "summary": "DOS INT 21h AH=09h prints the '$'-terminated string pointed to by DS:DX.", "sourceIDs": ["helppc", "rbil"] },
+    { "vector": 33, "service": 10, "name": "dos_buffered_input", "wrapperName": "dos_buffered_input", "summary": "DOS INT 21h AH=0Ah reads a buffered keyboard line into the buffer at DS:DX.", "sourceIDs": ["helppc", "rbil"] },
+    { "vector": 33, "service": 11, "name": "dos_check_stdin_status", "wrapperName": "dos_check_stdin_status", "summary": "DOS INT 21h AH=0Bh checks whether a character is waiting on standard input.", "sourceIDs": ["helppc", "rbil"] },
+    { "vector": 33, "service": 12, "name": "dos_flush_stdin", "wrapperName": "dos_flush_stdin", "summary": "DOS INT 21h AH=0Ch flushes the keyboard buffer and then performs the input function selected by AL.", "sourceIDs": ["helppc", "rbil"] },
+    { "vector": 33, "service": 25, "name": "dos_set_interrupt_vector", "wrapperName": "dos_set_interrupt_vector", "summary": "DOS INT 21h AH=25h installs a new interrupt vector using AL as the vector number and DS:DX as the handler address.", "sourceIDs": ["helppc", "rbil"] },
+    { "vector": 33, "service": 26, "name": "dos_set_dta", "wrapperName": "dos_set_dta", "summary": "DOS INT 21h AH=1Ah sets the Disk Transfer Area address from DS:DX.", "sourceIDs": ["helppc", "rbil"] },
+    { "vector": 33, "service": 42, "name": "dos_get_date", "wrapperName": "dos_get_date", "summary": "DOS INT 21h AH=2Ah returns the current system date.", "sourceIDs": ["helppc", "rbil"] },
+    { "vector": 33, "service": 44, "name": "dos_get_time", "wrapperName": "dos_get_time", "summary": "DOS INT 21h AH=2Ch returns the current system time.", "sourceIDs": ["helppc", "rbil"] },
+    { "vector": 33, "service": 48, "name": "dos_get_version", "wrapperName": "dos_get_version", "summary": "DOS INT 21h AH=30h returns the DOS version number and OEM identifier.", "sourceIDs": ["helppc", "rbil"] },
+    { "vector": 33, "service": 49, "name": "dos_stay_resident", "wrapperName": "dos_stay_resident", "summary": "DOS INT 21h AH=31h terminates and stays resident, keeping part of the program in memory.", "sourceIDs": ["helppc", "rbil"] },
+    { "vector": 33, "service": 53, "name": "dos_get_interrupt_vector", "wrapperName": "dos_get_interrupt_vector", "summary": "DOS INT 21h AH=35h returns an interrupt vector in ES:BX for the vector number in AL.", "sourceIDs": ["helppc", "rbil"] },
+    { "vector": 33, "service": 57, "name": "dos_make_directory", "wrapperName": "dos_make_directory", "summary": "DOS INT 21h AH=39h creates the directory whose path is at DS:DX.", "sourceIDs": ["helppc", "rbil"] },
+    { "vector": 33, "service": 58, "name": "dos_remove_directory", "wrapperName": "dos_remove_directory", "summary": "DOS INT 21h AH=3Ah removes the directory whose path is at DS:DX.", "sourceIDs": ["helppc", "rbil"] },
+    { "vector": 33, "service": 59, "name": "dos_change_directory", "wrapperName": "dos_change_directory", "summary": "DOS INT 21h AH=3Bh changes the current directory to the path at DS:DX.", "sourceIDs": ["helppc", "rbil"] },
+    { "vector": 33, "service": 60, "name": "dos_create_file", "wrapperName": "dos_create_file", "summary": "DOS INT 21h AH=3Ch creates or truncates a file using the path at DS:DX and attributes in CX.", "sourceIDs": ["helppc", "rbil"] },
+    { "vector": 33, "service": 61, "name": "dos_open_file", "wrapperName": "dos_open_file", "summary": "DOS INT 21h AH=3Dh opens an existing file using the access mode in AL and path at DS:DX.", "sourceIDs": ["helppc", "rbil"] },
+    { "vector": 33, "service": 62, "name": "dos_close_file", "wrapperName": "dos_close_file", "summary": "DOS INT 21h AH=3Eh closes the file handle in BX.", "sourceIDs": ["helppc", "rbil"] },
+    { "vector": 33, "service": 63, "name": "dos_read_file", "wrapperName": "dos_read_file", "summary": "DOS INT 21h AH=3Fh reads CX bytes from file handle BX into the buffer at DS:DX.", "sourceIDs": ["helppc", "rbil"] },
+    { "vector": 33, "service": 64, "name": "dos_write_file", "wrapperName": "dos_write_file", "summary": "DOS INT 21h AH=40h writes CX bytes from DS:DX to the file handle in BX.", "sourceIDs": ["helppc", "rbil"] },
+    { "vector": 33, "service": 65, "name": "dos_delete_file", "wrapperName": "dos_delete_file", "summary": "DOS INT 21h AH=41h deletes the file whose path is at DS:DX.", "sourceIDs": ["helppc", "rbil"] },
+    { "vector": 33, "service": 66, "name": "dos_seek_file", "wrapperName": "dos_seek_file", "summary": "DOS INT 21h AH=42h moves the file pointer for handle BX according to AL and CX:DX.", "sourceIDs": ["helppc", "rbil"] },
+    { "vector": 33, "service": 67, "name": "dos_file_attributes", "wrapperName": "dos_file_attributes", "summary": "DOS INT 21h AH=43h gets or sets file attributes for the path at DS:DX.", "sourceIDs": ["helppc", "rbil"] },
+    { "vector": 33, "service": 68, "name": "dos_ioctl", "wrapperName": "dos_ioctl", "summary": "DOS INT 21h AH=44h performs IOCTL device or file control functions.", "sourceIDs": ["helppc", "rbil"] },
+    { "vector": 33, "service": 71, "name": "dos_get_current_directory", "wrapperName": "dos_get_current_directory", "summary": "DOS INT 21h AH=47h returns the current directory for drive DL into the buffer at DS:SI.", "sourceIDs": ["helppc", "rbil"] },
+    { "vector": 33, "service": 72, "name": "dos_allocate_memory", "wrapperName": "dos_allocate_memory", "summary": "DOS INT 21h AH=48h allocates BX paragraphs of memory and returns the segment on success.", "sourceIDs": ["helppc", "rbil"] },
+    { "vector": 33, "service": 73, "name": "dos_free_memory", "wrapperName": "dos_free_memory", "summary": "DOS INT 21h AH=49h frees the memory block whose segment is in ES.", "sourceIDs": ["helppc", "rbil"] },
+    { "vector": 33, "service": 74, "name": "dos_resize_memory", "wrapperName": "dos_resize_memory", "summary": "DOS INT 21h AH=4Ah resizes the memory block at ES to BX paragraphs.", "sourceIDs": ["helppc", "rbil"] },
+    { "vector": 33, "service": 75, "name": "dos_exec", "wrapperName": "dos_exec", "summary": "DOS INT 21h AH=4Bh loads or executes another program using the path at DS:DX and parameter block at ES:BX.", "sourceIDs": ["helppc", "rbil"] },
+    { "vector": 33, "service": 76, "name": "dos_exit", "wrapperName": "dos_exit", "summary": "DOS INT 21h AH=4Ch terminates the program and returns AL as the exit code.", "sourceIDs": ["helppc", "rbil"] },
+    { "vector": 33, "service": 77, "name": "dos_get_return_code", "wrapperName": "dos_get_return_code", "summary": "DOS INT 21h AH=4Dh returns the termination type and return code of the last child process.", "sourceIDs": ["helppc", "rbil"] },
+    { "vector": 33, "service": 78, "name": "dos_find_first", "wrapperName": "dos_find_first", "summary": "DOS INT 21h AH=4Eh begins a file search using the pattern at DS:DX and attributes in CX.", "sourceIDs": ["helppc", "rbil"] },
+    { "vector": 33, "service": 79, "name": "dos_find_next", "wrapperName": "dos_find_next", "summary": "DOS INT 21h AH=4Fh continues the previous file search using the current DTA.", "sourceIDs": ["helppc", "rbil"] },
+    { "vector": 33, "service": 86, "name": "dos_rename_file", "wrapperName": "dos_rename_file", "summary": "DOS INT 21h AH=56h renames or moves a file from DS:DX to ES:DI.", "sourceIDs": ["helppc", "rbil"] },
+
+    { "vector": 16, "service": 0, "name": "bios_set_video_mode", "wrapperName": "bios_set_video_mode", "summary": "BIOS INT 10h AH=00h sets the current video mode using AL.", "sourceIDs": ["helppc", "rbil"] },
+    { "vector": 16, "service": 1, "name": "bios_set_cursor_shape", "wrapperName": "bios_set_cursor_shape", "summary": "BIOS INT 10h AH=01h sets the text-mode cursor start and end scan lines from CH and CL.", "sourceIDs": ["helppc", "rbil"] },
+    { "vector": 16, "service": 2, "name": "bios_set_cursor_position", "wrapperName": "bios_set_cursor_position", "summary": "BIOS INT 10h AH=02h positions the text cursor using BH, DH, and DL.", "sourceIDs": ["helppc", "rbil"] },
+    { "vector": 16, "service": 6, "name": "bios_scroll_up_window", "wrapperName": "bios_scroll_up_window", "summary": "BIOS INT 10h AH=06h scrolls or clears a text window defined by CX and DX.", "sourceIDs": ["helppc", "rbil"] },
+    { "vector": 16, "service": 9, "name": "bios_write_char_attr", "wrapperName": "bios_write_char_attr", "summary": "BIOS INT 10h AH=09h writes a character with an attribute at the cursor position.", "sourceIDs": ["helppc", "rbil"] },
+    { "vector": 16, "service": 14, "name": "bios_teletype_output", "wrapperName": "bios_teletype_output", "summary": "BIOS INT 10h AH=0Eh writes one teletype character from AL and advances the cursor.", "sourceIDs": ["helppc", "rbil"] },
+    { "vector": 16, "service": 15, "name": "bios_get_video_state", "wrapperName": "bios_get_video_state", "summary": "BIOS INT 10h AH=0Fh returns the current video mode, page, and text width.", "sourceIDs": ["helppc", "rbil"] },
+
+    { "vector": 22, "service": 0, "name": "bios_read_key", "wrapperName": "bios_read_key", "summary": "BIOS INT 16h AH=00h waits for a keypress and returns ASCII in AL and scan code in AH.", "sourceIDs": ["helppc", "rbil"] },
+    { "vector": 22, "service": 1, "name": "bios_peek_key", "wrapperName": "bios_peek_key", "summary": "BIOS INT 16h AH=01h checks whether a key is available without removing it from the keyboard buffer.", "sourceIDs": ["helppc", "rbil"] },
+    { "vector": 22, "service": 2, "name": "bios_get_shift_flags", "wrapperName": "bios_get_shift_flags", "summary": "BIOS INT 16h AH=02h returns the current keyboard shift-state flags in AL.", "sourceIDs": ["helppc", "rbil"] }
+  ]
+}

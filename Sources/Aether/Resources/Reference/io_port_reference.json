@@ -1,0 +1,36 @@
+{
+  "version": 1,
+  "sources": [
+    {
+      "id": "helppc",
+      "title": "HelpPC Hardware Port Reference",
+      "url": "https://stanislavs.org/helppc/ports.html"
+    },
+    {
+      "id": "msdos_ref_1991",
+      "title": "Microsoft MS-DOS Programmer's Reference (1991, Internet Archive text scan)",
+      "url": "https://archive.org/stream/bitsavers_microsoftmProgrammersReference1991_32070717/Microsoft_-_MS-DOS_Programmers_Reference_1991_djvu.txt"
+    }
+  ],
+  "ports": [
+    { "port": 32, "name": "PIC1_COMMAND", "summary": "Master 8259 Programmable Interrupt Controller command port.", "sourceIDs": ["helppc"] },
+    { "port": 33, "name": "PIC1_DATA", "summary": "Master 8259 Programmable Interrupt Controller data and mask port.", "sourceIDs": ["helppc"] },
+    { "port": 64, "name": "PIT_COUNTER0", "summary": "8253/8254 programmable interval timer channel 0 data port.", "sourceIDs": ["helppc"] },
+    { "port": 65, "name": "PIT_COUNTER1", "summary": "8253/8254 programmable interval timer channel 1 data port.", "sourceIDs": ["helppc"] },
+    { "port": 66, "name": "PIT_COUNTER2", "summary": "8253/8254 programmable interval timer channel 2 data port, often used with the speaker.", "sourceIDs": ["helppc"] },
+    { "port": 67, "name": "PIT_MODE_CONTROL", "summary": "8253/8254 programmable interval timer mode and control register.", "sourceIDs": ["helppc"] },
+    { "port": 96, "name": "KEYBOARD_DATA", "summary": "Keyboard controller data port used for scan codes and controller output.", "sourceIDs": ["helppc"] },
+    { "port": 97, "name": "SYSTEM_CONTROL_B", "summary": "System control port B, commonly used for speaker and timer gate control.", "sourceIDs": ["helppc"] },
+    { "port": 100, "name": "KEYBOARD_STATUS", "summary": "Keyboard controller status and command port.", "sourceIDs": ["helppc"] },
+    { "port": 160, "name": "PIC2_COMMAND", "summary": "Slave 8259 Programmable Interrupt Controller command port.", "sourceIDs": ["helppc"] },
+    { "port": 161, "name": "PIC2_DATA", "summary": "Slave 8259 Programmable Interrupt Controller data and mask port.", "sourceIDs": ["helppc"] },
+    { "port": 948, "name": "MDA_CRTC_INDEX", "summary": "Monochrome Display Adapter CRT controller index register.", "sourceIDs": ["helppc", "msdos_ref_1991"] },
+    { "port": 949, "name": "MDA_CRTC_DATA", "summary": "Monochrome Display Adapter CRT controller data register.", "sourceIDs": ["helppc", "msdos_ref_1991"] },
+    { "port": 952, "name": "MDA_MODE_CONTROL", "summary": "Monochrome Display Adapter mode control register.", "sourceIDs": ["helppc", "msdos_ref_1991"] },
+    { "port": 959, "name": "MDA_FEATURE_CONTROL", "summary": "Monochrome Display Adapter feature control register.", "sourceIDs": ["helppc", "msdos_ref_1991"] },
+    { "port": 980, "name": "CGA_CRTC_INDEX", "summary": "Color Graphics Adapter CRT controller index register.", "sourceIDs": ["helppc", "msdos_ref_1991"] },
+    { "port": 981, "name": "CGA_CRTC_DATA", "summary": "Color Graphics Adapter CRT controller data register.", "sourceIDs": ["helppc", "msdos_ref_1991"] },
+    { "port": 984, "name": "CGA_MODE_CONTROL", "summary": "Color Graphics Adapter mode control register.", "sourceIDs": ["helppc", "msdos_ref_1991"] },
+    { "port": 986, "name": "CGA_STATUS", "summary": "Color Graphics Adapter status register.", "sourceIDs": ["helppc"] }
+  ]
+}

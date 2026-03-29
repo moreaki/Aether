@@ -695,16 +695,32 @@ private struct SemanticHelpBadge: View {
                 showPopover = hovering
             }
             .popover(isPresented: $showPopover, arrowEdge: .bottom) {
-                Text(text)
-                    .font(.system(.body))
-                    .frame(maxWidth: 320, alignment: .leading)
-                    .padding(12)
+                ScrollView {
+                    Text(text)
+                        .font(.system(.body))
+                        .textSelection(.enabled)
+                        .lineLimit(nil)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(12)
+                }
+                .frame(minWidth: 320, idealWidth: 420, maxWidth: 520, minHeight: 80, idealHeight: 180, maxHeight: 420)
             }
             .help("Show helper explanation")
     }
 }
 
 private func semanticHelperDescription(in line: String) -> String? {
+    if let helperName = helperName(in: line),
+       let referenceSummary = DOSInterruptReferenceStore.detail(forHelperName: helperName) {
+        return referenceSummary
+    }
+
+    if let portName = referencedPortName(in: line),
+       let portDetail = IOPortReferenceStore.detail(forPortNamed: portName) {
+        return portDetail
+    }
+
     let helperDescriptions: [(String, String)] = [
         ("clear_direction_flag(", "Clears the CPU direction flag so string instructions advance forward."),
         ("set_direction_flag(", "Sets the CPU direction flag so string instructions run backward."),
@@ -733,6 +749,22 @@ private func semanticHelperDescription(in line: String) -> String? {
     }
 
     return nil
+}
+
+private func helperName(in line: String) -> String? {
+    guard let range = line.range(of: #"[A-Za-z_][A-Za-z0-9_\.]*\("#, options: .regularExpression) else {
+        return nil
+    }
+
+    return String(line[range].dropLast())
+}
+
+private func referencedPortName(in line: String) -> String? {
+    guard let range = line.range(of: #"\b[A-Z][A-Z0-9_]{2,}\b"#, options: .regularExpression) else {
+        return nil
+    }
+
+    return String(line[range])
 }
 
 // MARK: - Character Extensions

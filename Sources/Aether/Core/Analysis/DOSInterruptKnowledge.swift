@@ -6,6 +6,7 @@ struct DOSInterruptCall {
     let name: String
     let statement: String
     let wrapperName: String?
+    let summary: String?
 }
 
 enum DOSInterruptKnowledge {
@@ -76,7 +77,8 @@ enum DOSInterruptKnowledge {
                 service: nil,
                 name: "dos_terminate",
                 statement: "dos_terminate();",
-                wrapperName: "dos_terminate"
+                wrapperName: "dos_terminate",
+                summary: DOSInterruptReferenceStore.entry(vector: vector, service: nil, fallbackName: "dos_terminate")?.summary
             )
         case 0x21:
             return classifyDOSInterrupt21(state: state)
@@ -90,7 +92,8 @@ enum DOSInterruptKnowledge {
                 service: nil,
                 name: String(format: "interrupt_0x%02X", vector),
                 statement: String(format: "interrupt_0x%02X();", vector),
-                wrapperName: nil
+                wrapperName: nil,
+                summary: DOSInterruptReferenceStore.entry(vector: vector, service: nil)?.summary
             )
         }
     }
@@ -108,7 +111,8 @@ enum DOSInterruptKnowledge {
                 service: nil,
                 name: "dos_int21",
                 statement: "dos_int21();",
-                wrapperName: nil
+                wrapperName: nil,
+                summary: DOSInterruptReferenceStore.entry(vector: 0x21, service: nil, fallbackName: "dos_int21")?.summary
             )
         }
 
@@ -197,7 +201,12 @@ enum DOSInterruptKnowledge {
                 service: UInt16(service),
                 name: String(format: "dos_int21_%02X", service),
                 statement: String(format: "dos_int21_0x%02X();", service),
-                wrapperName: String(format: "dos_int21_%02X", service)
+                wrapperName: String(format: "dos_int21_%02X", service),
+                summary: DOSInterruptReferenceStore.entry(
+                    vector: 0x21,
+                    service: UInt16(service),
+                    fallbackName: String(format: "dos_int21_%02X", service)
+                )?.summary
             )
         }
     }
@@ -226,7 +235,8 @@ enum DOSInterruptKnowledge {
                 service: service.map(UInt16.init),
                 name: "bios_video_interrupt",
                 statement: "bios_video_interrupt();",
-                wrapperName: nil
+                wrapperName: nil,
+                summary: DOSInterruptReferenceStore.entry(vector: 0x10, service: service.map(UInt16.init), fallbackName: "bios_video_interrupt")?.summary
             )
         }
     }
@@ -247,18 +257,21 @@ enum DOSInterruptKnowledge {
                 service: service.map(UInt16.init),
                 name: "bios_keyboard_interrupt",
                 statement: "bios_keyboard_interrupt();",
-                wrapperName: nil
+                wrapperName: nil,
+                summary: DOSInterruptReferenceStore.entry(vector: 0x16, service: service.map(UInt16.init), fallbackName: "bios_keyboard_interrupt")?.summary
             )
         }
     }
 
     private static func call(_ vector: UInt8, _ service: UInt8?, _ name: String, _ statement: String) -> DOSInterruptCall {
-        DOSInterruptCall(
+        let reference = DOSInterruptReferenceStore.entry(vector: vector, service: service.map(UInt16.init), fallbackName: name)
+        return DOSInterruptCall(
             interruptVector: vector,
             service: service.map(UInt16.init),
-            name: name,
+            name: reference?.name ?? name,
             statement: statement,
-            wrapperName: name
+            wrapperName: reference?.wrapperName ?? name,
+            summary: reference?.summary
         )
     }
 
