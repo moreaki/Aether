@@ -124,7 +124,7 @@ class MachOLoader: BinaryLoaderProtocol {
         var entryPoint: UInt64 = 0
 
         debugLog("Parsing \(header.ncmds) load commands...")
-        for i in 0..<header.ncmds {
+        for _ in 0..<header.ncmds {
             guard let cmd = data.readUInt32LE(at: cmdOffset),
                   let cmdSize = data.readUInt32LE(at: cmdOffset + 4) else {
                 break

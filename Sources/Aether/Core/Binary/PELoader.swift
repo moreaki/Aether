@@ -87,7 +87,7 @@ class PELoader: BinaryLoaderProtocol {
               let machine = data.readUInt16LE(at: coffOffset),
               let numberOfSections = data.readUInt16LE(at: coffOffset + 2),
               let sizeOfOptionalHeader = data.readUInt16LE(at: coffOffset + 16),
-              let characteristics = data.readUInt16LE(at: coffOffset + 18) else {
+              data.readUInt16LE(at: coffOffset + 18) != nil else {
             throw BinaryLoaderError.invalidHeader
         }
 

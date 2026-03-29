@@ -38,7 +38,7 @@ func debugLog(_ msg: String) {
 }
 
 /// Main binary loader that delegates to format-specific loaders
-class BinaryLoader {
+final class BinaryLoader: @unchecked Sendable {
     private let loaders: [BinaryLoaderProtocol]
 
     init() {

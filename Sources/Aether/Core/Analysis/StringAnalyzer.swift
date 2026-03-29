@@ -1,7 +1,7 @@
 import Foundation
 
 /// Analyzes binary to find strings
-class StringAnalyzer {
+final class StringAnalyzer: @unchecked Sendable {
 
     private let minStringLength = 4
     private let maxStringLength = 4096

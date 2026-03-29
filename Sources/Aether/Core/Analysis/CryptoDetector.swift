@@ -385,8 +385,6 @@ class AdvancedCryptoDetector {
 
     /// Scan code for algorithmic patterns
     private func scanCodePatterns(in section: Section, binary: BinaryFile) -> [CryptoFinding] {
-        var findings: [CryptoFinding] = []
-
         // Look for rotation operations (common in crypto)
         // ROL, ROR, or (x << n) | (x >> (32-n))
 
@@ -394,7 +392,7 @@ class AdvancedCryptoDetector {
 
         // Look for 64-round loops (common in SHA-256, etc.)
 
-        return findings
+        return []
     }
 
     // MARK: - Pattern Matching Helpers

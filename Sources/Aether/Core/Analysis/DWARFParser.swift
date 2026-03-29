@@ -305,17 +305,17 @@ class DWARFParser {
             actualLength = UInt64(unitLength)
         }
 
-        guard let version = data.readUInt16LE(at: headerOffset) else { return nil }
+        guard data.readUInt16LE(at: headerOffset) != nil else { return nil }
         headerOffset += 2
 
-        guard let abbrevOffset = data.readUInt32LE(at: headerOffset) else { return nil }
+        guard data.readUInt32LE(at: headerOffset) != nil else { return nil }
         headerOffset += 4
 
         guard let addressSize = data.readUInt8(at: headerOffset) else { return nil }
         headerOffset += 1
 
         // Parse DIEs (Debug Information Entries)
-        var cu = CompileUnit(
+        let cu = CompileUnit(
             name: "",
             compDir: "",
             producer: "",
@@ -350,11 +350,11 @@ class DWARFParser {
                 // Extract relevant information based on tag
                 if abbrev.tag == DWARFTag.subprogram.rawValue {
                     // Function
-                    if let funcInfo = extractFunctionInfo(
+                    if extractFunctionInfo(
                         attr: attr,
                         value: value,
                         binary: binary
-                    ) {
+                    ) != nil {
                         // Add to functions list
                     }
                 }
@@ -578,13 +578,11 @@ class DWARFParser {
         idx += 2
 
         var addressSize: Int = 8
-        var segmentSelectorSize: UInt8 = 0
-
         if version >= 5 {
             guard let addrSize = data.readUInt8(at: idx) else { return nil }
             addressSize = Int(addrSize)
             idx += 1
-            segmentSelectorSize = data.readUInt8(at: idx) ?? 0
+            _ = data.readUInt8(at: idx) ?? 0
             idx += 1
         }
 

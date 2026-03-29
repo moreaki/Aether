@@ -440,8 +440,7 @@ class ControlFlowStructurer {
             let condition = extractCondition(from: latchBlock)
 
             // Structure body
-            var bodyVisited = visited
-            let body = structureLoopBody(entry: header.startAddress, loopBlocks: loopBlocks.subtracting([backEdge.from]), visited: bodyVisited)
+            let body = structureLoopBody(entry: header.startAddress, loopBlocks: loopBlocks.subtracting([backEdge.from]), visited: visited)
 
             let doWhileStruct = ControlStructure.doWhileLoop(body: body, condition: condition)
 
@@ -509,7 +508,7 @@ class ControlFlowStructurer {
     }
 
     private func structureLoopBody(entry: UInt64, loopBlocks: Set<UInt64>, visited: Set<UInt64>) -> ControlStructure {
-        guard loopBlocks.contains(entry), let block = blocks[entry] else {
+        guard loopBlocks.contains(entry) else {
             return .sequence([])
         }
 

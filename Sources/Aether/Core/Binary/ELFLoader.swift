@@ -78,7 +78,7 @@ class ELFLoader: BinaryLoaderProtocol {
         )
 
         // Parse section headers
-        let (sections, stringTable) = try parseSectionHeaders(
+        let (sections, _) = try parseSectionHeaders(
             data: data,
             offset: Int(header.shoff),
             count: Int(header.shnum),
@@ -380,9 +380,6 @@ class ELFLoader: BinaryLoaderProtocol {
         is64Bit: Bool,
         littleEndian: Bool
     ) throws -> [Symbol] {
-        let read16: (Int) -> UInt16? = { off in
-            littleEndian ? data.readUInt16LE(at: off) : data.readUInt16BE(at: off)
-        }
         let read32: (Int) -> UInt32? = { off in
             littleEndian ? data.readUInt32LE(at: off) : data.readUInt32BE(at: off)
         }
@@ -393,7 +390,7 @@ class ELFLoader: BinaryLoaderProtocol {
         var symbols: [Symbol] = []
 
         // Find symbol tables
-        for (index, section) in sections.enumerated() {
+        for section in sections {
             guard section.name == ".symtab" || section.name == ".dynsym" else { continue }
 
             // Find associated string table

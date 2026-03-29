@@ -26,8 +26,8 @@ class CapstoneDisassembler {
     struct CSMode: OptionSet {
         let rawValue: UInt32
 
-        static let littleEndian = CSMode(rawValue: 0)
-        static let arm = CSMode(rawValue: 0)
+        static let littleEndian: CSMode = []
+        static let arm: CSMode = []
         static let mode16 = CSMode(rawValue: 1 << 1)
         static let mode32 = CSMode(rawValue: 1 << 2)
         static let mode64 = CSMode(rawValue: 1 << 3)
@@ -249,7 +249,7 @@ class CapstoneDisassembler {
     private func parseMemoryOperand(_ inner: String, architecture: Architecture) -> OperandDetail.OpType {
         var base: String? = nil
         var index: String? = nil
-        var scale = 1
+        let scale = 1
         var displacement: Int64 = 0
 
         // Simple parsing for common patterns
@@ -331,8 +331,6 @@ class DataFlowAnalyzer {
             liveIn: [:],
             liveOut: [:]
         )
-
-        let capstone = CapstoneDisassembler()
 
         // Build def-use chains
         for insn in instructions {

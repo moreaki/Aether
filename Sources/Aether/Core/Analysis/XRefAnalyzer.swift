@@ -11,9 +11,6 @@ class XRefAnalyzer {
     ) async -> [CrossReference] {
         var xrefs: [CrossReference] = []
 
-        // Build function address lookup
-        let functionAddresses = Set(functions.map { $0.startAddress })
-
         // Analyze each code section
         for section in binary.sections where section.containsCode {
             let instructions = await disassembler.disassemble(

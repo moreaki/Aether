@@ -213,8 +213,7 @@ class JARLoader: BinaryLoaderProtocol {
 
         // Read manifest if exists
         let manifestPath = tempDir.appendingPathComponent("META-INF/MANIFEST.MF")
-        if let manifestData = try? Data(contentsOf: manifestPath),
-           let manifestString = String(data: manifestData, encoding: .utf8) {
+        if let manifestData = try? Data(contentsOf: manifestPath) {
             manifest = parseManifest(manifestData)
         }
 
@@ -892,8 +891,8 @@ class JARLoader: BinaryLoaderProtocol {
 // MARK: - BinaryFile Extensions for Java
 
 extension BinaryFile {
-    private static var javaClassesKey = "javaClasses"
-    private static var jarFileKey = "jarFile"
+    private static var javaClassesKey: UInt8 = 0
+    private static var jarFileKey: UInt8 = 0
 
     var javaClasses: [JARLoader.JavaClass]? {
         get { objc_getAssociatedObject(self, &BinaryFile.javaClassesKey) as? [JARLoader.JavaClass] }

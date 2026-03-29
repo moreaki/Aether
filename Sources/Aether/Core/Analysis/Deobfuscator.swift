@@ -246,7 +246,7 @@ class Deobfuscator {
         let val1 = df.getValue(register: parts[0].lowercased(), at: insn.address)
         let val2 = parseConstantOrGetValue(parts[1], at: insn.address, df: df)
 
-        if case .constant(let c1) = val1, case .constant(let c2) = val2 {
+        if case .constant = val1, case .constant = val2 {
             // Both are constants, we can evaluate
             // The actual comparison depends on the following conditional jump
             return true  // Predicate can be resolved
@@ -520,7 +520,7 @@ class Deobfuscator {
         guard let first = instructions.first,
               let parts = first.operands.split(separator: ",").last else { return nil }
 
-        var value = parseConstant(String(parts))
+        let value = parseConstant(String(parts))
         guard var currentValue = value else { return nil }
 
         for insn in instructions.dropFirst() {
@@ -647,7 +647,7 @@ class Deobfuscator {
 
     private func resolveOpaquePredicate(at address: UInt64, function: Function) -> Bool? {
         // Find the block containing the predicate
-        guard let block = function.basicBlocks.first(where: { $0.instructions.contains { $0.address == address } }) else {
+        guard function.basicBlocks.contains(where: { $0.instructions.contains { $0.address == address } }) else {
             return nil
         }
 
