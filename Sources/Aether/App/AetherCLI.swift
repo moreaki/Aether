@@ -55,12 +55,13 @@ enum AetherCLI {
           Aether functions <input> [--refresh] [--no-cache] [--output <plain|json>]
           Aether listAllFunctions <input> [--refresh] [--no-cache] [--output <plain|json>]
           Aether disassemble <input> [--function <name|address>] [--start <address> (--end <address> | --bytes <count>)] [--limit <count>] [--refresh] [--no-cache] [--output <plain|ansi|json>]
-          Aether decompile <input> [--function <name|address>] [--backend <native|radare2|internal|vineflower>] [--refresh] [--no-cache] [--output <plain|ansi|json>] [--line-numbers <none|all|function>] [--highlight]
+          Aether decompile <input> [--function <name|address>] [--backend <native|radare2|internal|vineflower>] [--style <pseudo|c>] [--refresh] [--no-cache] [--output <plain|ansi|json>] [--line-numbers <none|all|function>] [--highlight]
 
         Defaults:
           - Native binaries default to `start` if present, otherwise the entry point.
           - JAR/class inputs default to the first discovered method.
           - `decompile` backend defaults to `native` for native binaries and `internal` for Java archives/classes.
+          - `decompile` style defaults to `pseudo`.
           - `disassemble` and `decompile` output defaults to `plain`.
           - `decompile` line numbering defaults to `none`.
           - CLI commands use the persistent analysis cache by default; `--refresh` rebuilds it and `--no-cache` bypasses it.
@@ -161,7 +162,7 @@ enum AetherCLI {
             refreshCache: invocation.refreshCache
         )
         let function = try context.resolveFunction(identifier: invocation.functionIdentifier)
-        let result = try context.decompile(function: function, backend: invocation.backend)
+        let result = try context.decompile(function: function, backend: invocation.backend, style: invocation.style)
 
         switch invocation.outputFormat {
         case .plain:
@@ -238,6 +239,7 @@ private struct CLIInvocation {
     let byteCount: Int?
     let limit: Int?
     let backend: String?
+    let style: DecompilerOutputStyle
     let outputFormat: CLIOutputFormat
     let lineNumbers: CLILineNumbers
     let useCache: Bool
@@ -256,6 +258,7 @@ private struct CLIInvocation {
             self.byteCount = nil
             self.limit = nil
             self.backend = nil
+            self.style = .pseudo
             self.outputFormat = .plain
             self.lineNumbers = .none
             self.useCache = true
@@ -284,6 +287,7 @@ private struct CLIInvocation {
         var byteCount: Int?
         var limit: Int?
         var backend: String?
+        var style: DecompilerOutputStyle = .pseudo
         var outputFormat: CLIOutputFormat = .plain
         var lineNumbers: CLILineNumbers = .none
         var useCache = true
@@ -346,6 +350,13 @@ private struct CLIInvocation {
                     throw CLIError.usage("Missing value for --backend")
                 }
                 backend = arguments[index]
+            case "--style":
+                index += 1
+                guard index < arguments.count,
+                      let parsedStyle = DecompilerOutputStyle(rawValue: arguments[index].lowercased()) else {
+                    throw CLIError.usage("Missing or invalid value for --style")
+                }
+                style = parsedStyle
             case "--output":
                 index += 1
                 guard index < arguments.count, let parsedOutput = CLIOutputFormat(rawValue: arguments[index].lowercased()) else {
@@ -398,6 +409,7 @@ private struct CLIInvocation {
         self.byteCount = byteCount
         self.limit = limit
         self.backend = backend
+        self.style = style
         self.outputFormat = outputFormat
         self.lineNumbers = lineNumbers
         self.useCache = useCache
@@ -651,7 +663,7 @@ private final class CLIContext {
         }
     }
 
-    func decompile(function: Function, backend: String?) throws -> DecompiledOutput {
+    func decompile(function: Function, backend: String?, style: DecompilerOutputStyle) throws -> DecompiledOutput {
         if let javaClasses = binary.javaClasses, !javaClasses.isEmpty {
             return try decompileJava(function: function, javaClasses: javaClasses, backend: backend)
         }
@@ -669,7 +681,12 @@ private final class CLIContext {
         case .native:
             let preparedFunction = try analyzedFunction(at: function.startAddress, preferredName: function.name) ?? function
             let instructions = try disassemble(function: preparedFunction)
-            let source = nativeDecompiler.decompile(function: preparedFunction, instructions: instructions, binary: binary)
+            let source = nativeDecompiler.decompile(
+                function: preparedFunction,
+                instructions: instructions,
+                binary: binary,
+                style: style
+            )
             return DecompiledOutput(
                 backend: selectedBackend.rawValue,
                 language: binary.javaClasses == nil ? "c" : "java",

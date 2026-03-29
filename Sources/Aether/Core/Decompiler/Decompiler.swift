@@ -70,7 +70,12 @@ class Decompiler {
     private var currentReturnType = "void"
 
     /// Decompile a function to pseudo-C code
-    func decompile(function: Function, instructions: [Instruction], binary: BinaryFile) -> String {
+    func decompile(
+        function: Function,
+        instructions: [Instruction],
+        binary: BinaryFile,
+        style: DecompilerOutputStyle = .pseudo
+    ) -> String {
         self.binary = binary
         self.variableNames = [:]
         self.variableCounter = 0
@@ -142,6 +147,10 @@ class Decompiler {
             output = refineDOSPseudoCode(output)
         } else if currentReturnType == "void" {
             output = refineVoidPseudoCode(output)
+        }
+
+        if style == .cStyle {
+            output = convertToCStyle(output, binary: binary)
         }
 
         return output
@@ -483,6 +492,44 @@ class Decompiler {
         return replacements.reduce(source) { partial, replacement in
             replacingRegex(pattern: replacement.pattern, in: partial, template: replacement.template)
         }
+    }
+
+    private func convertToCStyle(_ source: String, binary: BinaryFile) -> String {
+        var converted = source
+
+        let replacements: [(String, String)] = [
+            (#"(?m)\bport_out8\("#, "outp("),
+            (#"(?m)\bport_out16\("#, "outpw("),
+            (#"(?m)\bport_in8\("#, "inp("),
+            (#"(?m)\bport_in16\("#, "inpw("),
+            (#"(?m)\binstall_interrupt_vector\(([^,]+), ([^,]+), ([^)]+)\);"#, "setvect($1, MK_FP($2, $3));"),
+            (#"(?m)\bclear_text_video_memory\(([^,]+), ([^)]+)\);"#, "fmemset(MK_FP($1, 0x0000), 0, ($2) * sizeof(uint16_t));"),
+            (#"(?m)\bclear_segment_words\(([^,]+), ([^)]+)\);"#, "fmemset(MK_FP($1, 0x0000), 0, ($2) * sizeof(uint16_t));"),
+            (#"(?m)\bhide_text_cursor\(\);"#, "set_text_cursor_shape(0x20, 0x20);")
+        ]
+
+        for (pattern, template) in replacements {
+            converted = replacingRegex(pattern: pattern, in: converted, template: template)
+        }
+
+        let header = cStyleHeader(for: converted, binary: binary)
+        if !header.isEmpty {
+            converted = header + converted
+        }
+
+        return converted
+    }
+
+    private func cStyleHeader(for source: String, binary: BinaryFile) -> String {
+        guard binary.format == .dos || binary.architecture == .x86_16 else {
+            return ""
+        }
+
+        var lines: [String] = []
+        lines.append("// C-style mode lowers some helpers into DOS C runtime idioms where possible.")
+        lines.append("// Calls like outp/outpw/setvect/MK_FP/fmemset are DOS-oriented C conventions, not ISO C.")
+        lines.append("")
+        return lines.joined(separator: "\n")
     }
 
     private func decompileRecognizedSwiftFunction(

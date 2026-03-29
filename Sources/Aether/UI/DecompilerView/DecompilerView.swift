@@ -7,6 +7,7 @@ struct DecompilerView: View {
     @AppStorage("fontName") private var fontName = "SF Mono"
     @AppStorage(SyntaxHighlightEngine.userDefaultsKey) private var syntaxHighlightEngine = SyntaxHighlightEngine.internalEngine.rawValue
     @AppStorage(DecompilerLineNumberingMode.userDefaultsKey) private var lineNumberingMode = DecompilerLineNumberingMode.allOutput.rawValue
+    @AppStorage(DecompilerOutputStyle.userDefaultsKey) private var outputStyle = DecompilerOutputStyle.pseudo.rawValue
     @State private var showEngineErrorDetails = false
 
     private var selectedSyntaxHighlightEngine: SyntaxHighlightEngine {
@@ -19,6 +20,14 @@ struct DecompilerView: View {
 
     private var nextSyntaxHighlightEngine: SyntaxHighlightEngine {
         selectedSyntaxHighlightEngine == .internalEngine ? .highlightSwift : .internalEngine
+    }
+
+    private var selectedOutputStyle: DecompilerOutputStyle {
+        DecompilerOutputStyle(rawValue: outputStyle) ?? .pseudo
+    }
+
+    private var nextOutputStyle: DecompilerOutputStyle {
+        selectedOutputStyle == .pseudo ? .cStyle : .pseudo
     }
 
     var body: some View {
@@ -81,6 +90,16 @@ struct DecompilerView: View {
                 .buttonStyle(.bordered)
                 .controlSize(.small)
                 .help("Switch syntax highlighter to \(nextSyntaxHighlightEngine.displayName)")
+
+                Button("Style: \(selectedOutputStyle.displayName)") {
+                    outputStyle = nextOutputStyle.rawValue
+                    if appState.selectedFunction != nil {
+                        appState.decompileCurrentFunction()
+                    }
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+                .help("Switch decompiler output style to \(nextOutputStyle.displayName)")
 
                 if appState.decompilerEngineError != nil {
                     Button {
@@ -748,6 +767,11 @@ private func semanticHelperDescription(in line: String) -> String? {
         ("lookup_byte_table(", "Performs an XLAT-style table lookup: AL selects a byte from the table at BX."),
         ("port_out8(", "Writes one byte to an I/O port, typically to program hardware registers directly."),
         ("port_out16(", "Writes one 16-bit word to an I/O port, typically to program hardware registers directly."),
+        ("outp(", "DOS C runtime helper that writes one byte to an x86 I/O port."),
+        ("outpw(", "DOS C runtime helper that writes one 16-bit word to an x86 I/O port."),
+        ("setvect(", "DOS C runtime helper that installs a real-mode interrupt vector."),
+        ("fmemset(", "Far-memory memset-style helper used by DOS compilers for segmented memory."),
+        ("set_text_cursor_shape(", "C-style wrapper for BIOS text cursor shape programming."),
         ("clear_segment_words(", "Temporarily switches ES to the requested segment and fills it with zero words."),
         ("clear_text_video_memory(", "Clears the MDA/CGA text video buffer by filling the text-memory segment with zero words."),
         ("fill_words(", "Stores the same 16-bit value repeatedly, like a `rep stosw` memory fill."),

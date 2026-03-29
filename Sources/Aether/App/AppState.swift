@@ -876,6 +876,11 @@ class AppState: ObservableObject {
         backendDisplayName(nextBinaryDecompilerBackend)
     }
 
+    var selectedDecompilerOutputStyle: DecompilerOutputStyle {
+        let rawValue = UserDefaults.standard.string(forKey: DecompilerOutputStyle.userDefaultsKey)
+        return DecompilerOutputStyle(rawValue: rawValue ?? "") ?? .pseudo
+    }
+
     func switchToNextJavaDecompilerBackend() {
         guard canSwitchToNextJavaDecompilerBackend else { return }
         UserDefaults.standard.set(nextJavaDecompilerBackend.rawValue, forKey: JavaDecompilerBackend.userDefaultsKey)
@@ -930,6 +935,7 @@ class AppState: ObservableObject {
 
         Task {
             let instructions = await disassembleFunction(function)
+            let style = self.selectedDecompilerOutputStyle
 
             // Run heavy decompilation off the main thread
             let decomp = self.decompiler
@@ -937,7 +943,8 @@ class AppState: ObservableObject {
                 return decomp.decompile(
                     function: function,
                     instructions: instructions,
-                    binary: binary
+                    binary: binary,
+                    style: style
                 )
             }.value
 

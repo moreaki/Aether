@@ -5,6 +5,7 @@ struct DecompilerSettingsTab: View {
     @AppStorage(SyntaxHighlightEngine.userDefaultsKey) private var syntaxEngine = SyntaxHighlightEngine.internalEngine.rawValue
     @AppStorage(DecompilerLineNumberingMode.userDefaultsKey) private var lineNumberingMode = DecompilerLineNumberingMode.allOutput.rawValue
     @AppStorage(BinaryDecompilerBackend.userDefaultsKey) private var binaryBackend = BinaryDecompilerBackend.native.rawValue
+    @AppStorage(DecompilerOutputStyle.userDefaultsKey) private var outputStyle = DecompilerOutputStyle.pseudo.rawValue
     @State private var radare2Path: String?
 
     var body: some View {
@@ -35,6 +36,21 @@ struct DecompilerSettingsTab: View {
                         .tag(SyntaxHighlightEngine.internalEngine.rawValue)
                     Text(translate("settings.decompiler.syntax.highlightswift"))
                         .tag(SyntaxHighlightEngine.highlightSwift.rawValue)
+                }
+                .labelsHidden()
+                .pickerStyle(.segmented)
+            }
+
+            VStack(alignment: .leading, spacing: 8) {
+                Text("Decompiler Output Style")
+                    .font(.subheadline)
+                    .fontWeight(.medium)
+
+                Picker("", selection: $outputStyle) {
+                    Text(DecompilerOutputStyle.pseudo.displayName)
+                        .tag(DecompilerOutputStyle.pseudo.rawValue)
+                    Text(DecompilerOutputStyle.cStyle.displayName)
+                        .tag(DecompilerOutputStyle.cStyle.rawValue)
                 }
                 .labelsHidden()
                 .pickerStyle(.segmented)
@@ -107,6 +123,8 @@ struct DecompilerSettingsTab: View {
                 Label(translate("settings.decompiler.info.internal"), systemImage: "hammer")
                     .font(.caption)
                 Label("radare2 can provide alternate DOS pseudocode when available.", systemImage: "terminal")
+                    .font(.caption)
+                Label("C-style mode lowers some helpers into DOS-C idioms such as outp/outpw/setvect when possible.", systemImage: "curlybraces")
                     .font(.caption)
                 Label(translate("settings.decompiler.info.highlightswift"), systemImage: "paintbrush.pointed")
                     .font(.caption)
