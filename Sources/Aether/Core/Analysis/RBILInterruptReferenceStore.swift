@@ -49,7 +49,11 @@ enum RBILInterruptReferenceStore {
         }
 
         guard let service else {
-            return candidates.first
+            let unqualified = candidates.filter { $0.selectors.isEmpty }
+            guard !unqualified.isEmpty else {
+                return nil
+            }
+            return bestRankedEntry(in: unqualified)
         }
 
         let exactMatches = candidates.filter { $0.primaryService == service }

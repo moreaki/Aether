@@ -711,9 +711,15 @@ private struct SemanticHelpBadge: View {
 }
 
 private func semanticHelperDescription(in line: String) -> String? {
-    if let helperName = helperName(in: line),
-       let referenceSummary = DOSInterruptReferenceStore.detail(forHelperName: helperName) {
-        return referenceSummary
+    if let helperName = helperName(in: line) {
+        if let referenceSummary = DOSInterruptReferenceStore.detail(forHelperName: helperName) {
+            return referenceSummary
+        }
+
+        if let reference = interruptReference(forHelperName: helperName),
+           let detail = DOSInterruptReferenceStore.detail(vector: reference.vector, service: reference.service) {
+            return detail
+        }
     }
 
     if let portName = referencedPortName(in: line),
@@ -736,8 +742,11 @@ private func semanticHelperDescription(in line: String) -> String? {
         ("bios_read_key(", "BIOS INT 16h AH=00h: waits for a keypress and returns ASCII in AL and scan code in AH."),
         ("dos_exit(", "DOS INT 21h AH=4Ch: terminates the program and returns the given exit code."),
         ("dos_print_string(", "DOS INT 21h AH=09h: prints a '$'-terminated string from DS:DX."),
+        ("install_interrupt_vector(", "Disables interrupts, writes a far handler pointer into the real-mode interrupt vector table, then reenables interrupts."),
         ("port_out8(", "Writes one byte to an I/O port, typically to program hardware registers directly."),
         ("port_out16(", "Writes one 16-bit word to an I/O port, typically to program hardware registers directly."),
+        ("clear_segment_words(", "Temporarily switches ES to the requested segment and fills it with zero words."),
+        ("clear_text_video_memory(", "Clears the MDA/CGA text video buffer by filling the text-memory segment with zero words."),
         ("fill_words(", "Stores the same 16-bit value repeatedly, like a `rep stosw` memory fill."),
         ("load_word_and_advance(", "Loads a 16-bit word from DS:SI and advances SI, matching `lodsw`."),
         ("load_byte_and_advance(", "Loads a byte from DS:SI and advances SI, matching `lodsb`."),
@@ -749,6 +758,39 @@ private func semanticHelperDescription(in line: String) -> String? {
     }
 
     return nil
+}
+
+private func interruptReference(forHelperName helperName: String) -> (vector: UInt8, service: UInt16?)? {
+    if let direct = DOSInterruptReferenceStore.entry(named: helperName) {
+        return (direct.vector, direct.service)
+    }
+
+    if let match = helperName.range(of: #"^interrupt_0x([0-9A-Fa-f]{2})$"#, options: .regularExpression) {
+        let value = helperName[match]
+        if let vectorText = value.split(separator: "x").last,
+           let vector = UInt8(vectorText, radix: 16) {
+            return (vector, nil)
+        }
+    }
+
+    if let match = helperName.range(of: #"^dos_int21_([0-9A-Fa-f]{2})$"#, options: .regularExpression) {
+        let value = helperName[match]
+        if let serviceText = value.split(separator: "_").last,
+           let service = UInt16(serviceText, radix: 16) {
+            return (0x21, service)
+        }
+    }
+
+    switch helperName {
+    case "dos_int21":
+        return (0x21, nil)
+    case "bios_video_interrupt":
+        return (0x10, nil)
+    case "bios_keyboard_interrupt":
+        return (0x16, nil)
+    default:
+        return nil
+    }
 }
 
 private func helperName(in line: String) -> String? {

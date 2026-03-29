@@ -42,6 +42,10 @@ enum DOSInterruptReferenceStore {
         return nil
     }
 
+    static func entry(named name: String) -> DOSInterruptReferenceEntry? {
+        entriesByName[name]
+    }
+
     static func summary(forHelperName name: String) -> String? {
         entriesByName[name]?.summary
     }
@@ -62,13 +66,14 @@ enum DOSInterruptReferenceStore {
             return nil
         }
 
+        let heading = lookupKey(for: entry.vector, service: entry.service)
         let sources = sourceSummaries(for: entry)
         guard !sources.isEmpty else {
-            return entry.summary
+            return "\(heading)\n\n\(entry.summary)"
         }
 
         let sourceLines = sources.map { "\($0.title)\n\($0.url)" }.joined(separator: "\n\n")
-        return "\(entry.summary)\n\nSources:\n\(sourceLines)"
+        return "\(heading)\n\n\(entry.summary)\n\nSources:\n\(sourceLines)"
     }
 
     static func sourceSummaries(for entry: DOSInterruptReferenceEntry) -> [DOSInterruptReferenceSource] {
@@ -81,6 +86,13 @@ enum DOSInterruptReferenceStore {
             return "\(vector):\(service)"
         }
         return "\(vector)"
+    }
+
+    private static func lookupKey(for vector: UInt8, service: UInt16?) -> String {
+        if let service {
+            return String(format: "INT %02Xh/AH=%02Xh", vector, service)
+        }
+        return String(format: "INT %02Xh", vector)
     }
 
     private static func loadCatalog() -> DOSInterruptReferenceCatalog? {

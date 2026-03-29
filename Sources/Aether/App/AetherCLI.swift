@@ -54,7 +54,7 @@ enum AetherCLI {
           Aether cleanCache [input] [--all] [--output <plain|json>]
           Aether functions <input> [--refresh] [--no-cache] [--output <plain|json>]
           Aether listAllFunctions <input> [--refresh] [--no-cache] [--output <plain|json>]
-          Aether disassemble <input> [--function <name|address>] [--limit <count>] [--refresh] [--no-cache] [--output <plain|ansi|json>]
+          Aether disassemble <input> [--function <name|address>] [--start <address> (--end <address> | --bytes <count>)] [--limit <count>] [--refresh] [--no-cache] [--output <plain|ansi|json>]
           Aether decompile <input> [--function <name|address>] [--backend <native|radare2|internal|vineflower>] [--refresh] [--no-cache] [--output <plain|ansi|json>] [--line-numbers <none|all|function>] [--highlight]
 
         Defaults:
@@ -70,6 +70,7 @@ enum AetherCLI {
           - `cleanCache` removes CLI cache entries for one input or the entire CLI cache with `--all`.
           - `decompile` still decompiles the selected function on demand.
           - Addresses may be written as `0x4f2`, `4f2`, `proc_04F2`, or `sub_401000`.
+          - `disassemble` supports raw address ranges with `--start ... --end ...` or `--start ... --bytes ...`.
           - `--highlight` is a shortcut for `--output ansi`.
         """)
     }
@@ -125,8 +126,17 @@ enum AetherCLI {
             useCache: invocation.useCache,
             refreshCache: invocation.refreshCache
         )
-        let function = try context.resolveFunction(identifier: invocation.functionIdentifier)
-        let instructions = try context.disassemble(function: function)
+        let instructions: [Instruction]
+        if let startAddress = invocation.startAddress {
+            instructions = try context.disassemble(
+                startAddress: startAddress,
+                endAddress: invocation.endAddress,
+                byteCount: invocation.byteCount
+            )
+        } else {
+            let function = try context.resolveFunction(identifier: invocation.functionIdentifier)
+            instructions = try context.disassemble(function: function)
+        }
         let visible = invocation.limit.map { Array(instructions.prefix($0)) } ?? instructions
 
         switch invocation.outputFormat {
@@ -223,6 +233,9 @@ private struct CLIInvocation {
     let command: CLICommand
     let inputPath: String
     let functionIdentifier: String?
+    let startAddress: UInt64?
+    let endAddress: UInt64?
+    let byteCount: Int?
     let limit: Int?
     let backend: String?
     let outputFormat: CLIOutputFormat
@@ -238,6 +251,9 @@ private struct CLIInvocation {
             self.command = .help
             self.inputPath = ""
             self.functionIdentifier = nil
+            self.startAddress = nil
+            self.endAddress = nil
+            self.byteCount = nil
             self.limit = nil
             self.backend = nil
             self.outputFormat = .plain
@@ -263,6 +279,9 @@ private struct CLIInvocation {
         }
 
         var functionIdentifier: String?
+        var startAddress: UInt64?
+        var endAddress: UInt64?
+        var byteCount: Int?
         var limit: Int?
         var backend: String?
         var outputFormat: CLIOutputFormat = .plain
@@ -297,6 +316,24 @@ private struct CLIInvocation {
                     throw CLIError.usage("Missing value for --function")
                 }
                 functionIdentifier = arguments[index]
+            case "--start":
+                index += 1
+                guard index < arguments.count, let parsedAddress = parseCLIAddress(arguments[index]) else {
+                    throw CLIError.usage("Missing or invalid value for --start")
+                }
+                startAddress = parsedAddress
+            case "--end":
+                index += 1
+                guard index < arguments.count, let parsedAddress = parseCLIAddress(arguments[index]) else {
+                    throw CLIError.usage("Missing or invalid value for --end")
+                }
+                endAddress = parsedAddress
+            case "--bytes":
+                index += 1
+                guard index < arguments.count, let parsedByteCount = Int(arguments[index]), parsedByteCount > 0 else {
+                    throw CLIError.usage("Missing or invalid value for --bytes")
+                }
+                byteCount = parsedByteCount
             case "--limit":
                 index += 1
                 guard index < arguments.count, let parsedLimit = Int(arguments[index]) else {
@@ -339,8 +376,26 @@ private struct CLIInvocation {
             throw CLIError.usage("Missing input path or use --all")
         }
 
+        if self.command == .disassemble {
+            if startAddress != nil && functionIdentifier != nil {
+                throw CLIError.usage("Use either --function or --start, not both")
+            }
+            if endAddress != nil && byteCount != nil {
+                throw CLIError.usage("Use either --end or --bytes, not both")
+            }
+            if startAddress == nil && (endAddress != nil || byteCount != nil) {
+                throw CLIError.usage("--end/--bytes require --start")
+            }
+            if startAddress != nil && endAddress == nil && byteCount == nil {
+                throw CLIError.usage("--start requires either --end or --bytes")
+            }
+        }
+
         self.inputPath = inputPath
         self.functionIdentifier = functionIdentifier
+        self.startAddress = startAddress
+        self.endAddress = endAddress
+        self.byteCount = byteCount
         self.limit = limit
         self.backend = backend
         self.outputFormat = outputFormat
@@ -349,6 +404,14 @@ private struct CLIInvocation {
         self.refreshCache = refreshCache
         self.cleanAllCaches = cleanAllCaches
     }
+}
+
+private func parseCLIAddress(_ value: String) -> UInt64? {
+    let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+    if trimmed.lowercased().hasPrefix("0x") {
+        return UInt64(trimmed.dropFirst(2), radix: 16)
+    }
+    return UInt64(trimmed, radix: 16) ?? UInt64(trimmed)
 }
 
 private enum CLIError: LocalizedError {
@@ -547,6 +610,45 @@ private final class CLIContext {
         } while true
 
         return instructions
+    }
+
+    func disassemble(startAddress: UInt64, endAddress: UInt64?, byteCount: Int?) throws -> [Instruction] {
+        guard binary.javaClasses == nil else {
+            throw CLIError.usage("Raw address disassembly is only supported for native binaries")
+        }
+        guard let section = binary.sections.first(where: { $0.contains(address: startAddress) }) else {
+            return []
+        }
+
+        let startOffset = Int(startAddress - section.address)
+        guard startOffset >= 0, startOffset < section.data.count else {
+            return []
+        }
+
+        let resolvedEndAddress: UInt64
+        if let endAddress {
+            guard endAddress > startAddress else {
+                throw CLIError.usage("--end must be greater than --start")
+            }
+            resolvedEndAddress = endAddress
+        } else if let byteCount {
+            resolvedEndAddress = startAddress + UInt64(byteCount)
+        } else {
+            throw CLIError.usage("Raw disassembly requires --end or --bytes")
+        }
+
+        let endOffset = Int(min(resolvedEndAddress - section.address, UInt64(section.data.count)))
+        guard endOffset > startOffset else {
+            return []
+        }
+
+        return try waitForAsyncResult { [self] in
+            await self.disassembler.disassemble(
+                data: Data(section.data[startOffset..<endOffset]),
+                address: startAddress,
+                architecture: self.binary.architecture
+            )
+        }
     }
 
     func decompile(function: Function, backend: String?) throws -> DecompiledOutput {

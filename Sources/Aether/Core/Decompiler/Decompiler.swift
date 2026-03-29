@@ -221,7 +221,126 @@ class Decompiler {
             )
         }
 
-        return refined
+        return refineDOSLinePatterns(refined)
+    }
+
+    private func refineDOSLinePatterns(_ source: String) -> String {
+        let lines = source.components(separatedBy: "\n")
+        var refined: [String] = []
+        var index = 0
+
+        while index < lines.count {
+            if let replacement = interruptVectorInstallationReplacement(lines: lines, startIndex: index) {
+                refined.append(replacement.line)
+                index += replacement.consumed
+                continue
+            }
+
+            if let replacement = clearSegmentWordsReplacement(lines: lines, startIndex: index) {
+                refined.append(replacement.line)
+                index += replacement.consumed
+                continue
+            }
+
+            refined.append(lines[index])
+            index += 1
+        }
+
+        return refined.joined(separator: "\n")
+    }
+
+    private func interruptVectorInstallationReplacement(lines: [String], startIndex: Int) -> (line: String, consumed: Int)? {
+        guard startIndex + 7 < lines.count else { return nil }
+
+        let slice = Array(lines[startIndex..<(startIndex + 8)])
+        let indent = leadingWhitespace(in: slice[0])
+
+        guard slice[0].trimmingCharacters(in: .whitespaces) == "push(es);",
+              slice[1].trimmingCharacters(in: .whitespaces) == "ax = 0;",
+              slice[2].trimmingCharacters(in: .whitespaces) == "es = ax;",
+              slice[3].trimmingCharacters(in: .whitespaces) == "disable_interrupts();",
+              let offsetWrite = matchLine(slice[4], pattern: #"^\s*es_([0-9A-Fa-f]{4}) = (0x[0-9A-Fa-f]+|\d+);$"#),
+              let segmentWrite = matchLine(slice[5], pattern: #"^\s*es_([0-9A-Fa-f]{4}) = (0x[0-9A-Fa-f]+|\d+);$"#),
+              slice[6].trimmingCharacters(in: .whitespaces) == "enable_interrupts();",
+              slice[7].trimmingCharacters(in: .whitespaces) == "es = pop();" else {
+            return nil
+        }
+
+        guard let offsetAddress = UInt64(offsetWrite[0], radix: 16),
+              let segmentAddress = UInt64(segmentWrite[0], radix: 16),
+              segmentAddress == offsetAddress + 2,
+              offsetAddress % 4 == 0 else {
+            return nil
+        }
+
+        let vector = offsetAddress / 4
+        let offsetValue = offsetWrite[1]
+        let segmentValue = segmentWrite[1]
+        let replacement = String(
+            format: "%@install_interrupt_vector(0x%02llX, %@, %@);",
+            indent,
+            vector,
+            segmentValue,
+            offsetValue
+        )
+        return (replacement, 8)
+    }
+
+    private func clearSegmentWordsReplacement(lines: [String], startIndex: Int) -> (line: String, consumed: Int)? {
+        guard startIndex + 7 < lines.count else { return nil }
+
+        let slice = Array(lines[startIndex..<(startIndex + 8)])
+        let indent = leadingWhitespace(in: slice[0])
+
+        guard slice[0].trimmingCharacters(in: .whitespaces) == "push(es);",
+              let segmentAssign = matchLine(slice[1], pattern: #"^\s*ax = (0x[0-9A-Fa-f]+|\d+);$"#),
+              slice[2].trimmingCharacters(in: .whitespaces) == "es = ax;",
+              slice[3].trimmingCharacters(in: .whitespaces) == "di = 0;",
+              let countAssign = matchLine(slice[4], pattern: #"^\s*cx = (0x[0-9A-Fa-f]+|\d+);$"#),
+              slice[5].trimmingCharacters(in: .whitespaces) == "ax = 0;",
+              slice[6].trimmingCharacters(in: .whitespaces) == "fill_words(es, di, ax, cx);",
+              slice[7].trimmingCharacters(in: .whitespaces) == "es = pop();" else {
+            return nil
+        }
+
+        let segmentValue = segmentAssign[0]
+        let countValue = countAssign[0]
+        let helperName = isTextVideoSegment(segmentValue) ? "clear_text_video_memory" : "clear_segment_words"
+        return ("\(indent)\(helperName)(\(segmentValue), \(countValue));", 8)
+    }
+
+    private func matchLine(_ line: String, pattern: String) -> [String]? {
+        guard let regex = try? NSRegularExpression(pattern: pattern) else {
+            return nil
+        }
+        let range = NSRange(line.startIndex..<line.endIndex, in: line)
+        guard let match = regex.firstMatch(in: line, range: range) else {
+            return nil
+        }
+
+        return (1..<match.numberOfRanges).compactMap { index in
+            guard let range = Range(match.range(at: index), in: line) else { return nil }
+            return String(line[range])
+        }
+    }
+
+    private func leadingWhitespace(in line: String) -> String {
+        String(line.prefix { $0 == " " || $0 == "\t" })
+    }
+
+    private func isTextVideoSegment(_ value: String) -> Bool {
+        guard let immediate = parseDOSImmediate(value) else {
+            return false
+        }
+        return immediate == 0xB000 || immediate == 0xB800
+    }
+
+    private func parseDOSImmediate(_ value: String) -> UInt64? {
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        if trimmed.hasPrefix("0x") {
+            return UInt64(trimmed.dropFirst(2), radix: 16)
+        }
+        return UInt64(trimmed)
     }
 
     private func refineVoidPseudoCode(_ source: String) -> String {
